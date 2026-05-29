@@ -5,15 +5,68 @@ app.use(express.urlencoded({ extended: true, limit: '50mb' }));
 app.use(express.json({ limit: '50mb' }));
 
 // ===============================
-// 임시 회원 목록
+// 간단 쿠키 처리
+// ===============================
+function parseCookies(req) {
+  const list = {};
+  const cookieHeader = req.headers.cookie;
+
+  if (!cookieHeader) return list;
+
+  cookieHeader.split(';').forEach(cookie => {
+    const parts = cookie.split('=');
+    const key = parts.shift().trim();
+    const value = decodeURIComponent(parts.join('='));
+    list[key] = value;
+  });
+
+  return list;
+}
+
+function isAdminLoggedIn(req) {
+  const cookies = parseCookies(req);
+  return cookies.sm1357_admin === 'yes';
+}
+
+function requireAdmin(req, res, next) {
+  if (!isAdminLoggedIn(req)) {
+    return res.redirect('/admin-login');
+  }
+
+  next();
+}
+
+// ===============================
+// 회원 계정 목록
 // ===============================
 const USERS = {
   vip001: '1234',
   vip002: '1234',
   vip003: '1234',
-  sm1357: '1234',
-  admin: 'admin1234'
+  vip004: '1234',
+  vip005: '1234',
+  vip006: '1234',
+  vip007: '1234',
+  vip008: '1234',
+  vip009: '1234',
+  vip010: '1234',
+  vip011: '1234',
+  vip012: '1234',
+  vip013: '1234',
+  vip014: '1234',
+  vip015: '1234',
+  vip016: '1234',
+  vip017: '1234',
+  vip018: '1234',
+  vip019: '1234',
+  vip020: '1234'
 };
+
+// ===============================
+// 관리자 계정
+// ===============================
+const ADMIN_ID = 'admin';
+const ADMIN_PASSWORD = 'admin1357';
 
 // ===============================
 // 임시 구매내역 저장소
@@ -150,6 +203,17 @@ function layout(title, body) {
       align-items: center;
     }
 
+    .notice {
+      padding: 12px;
+      background: #0f172a;
+      border: 1px solid #334155;
+      border-radius: 10px;
+      margin-bottom: 14px;
+      color: #cbd5e1;
+      font-size: 14px;
+      line-height: 1.6;
+    }
+
     .preview-img {
       display: none;
       max-width: 100%;
@@ -232,17 +296,6 @@ function layout(title, body) {
       font-weight: bold;
     }
 
-    .notice {
-      padding: 12px;
-      background: #0f172a;
-      border: 1px solid #334155;
-      border-radius: 10px;
-      margin-bottom: 14px;
-      color: #cbd5e1;
-      font-size: 14px;
-      line-height: 1.6;
-    }
-
     @media (max-width: 700px) {
       .top {
         display: block;
@@ -277,6 +330,18 @@ function layout(title, body) {
 }
 
 // ===============================
+// HTML 이스케이프
+// ===============================
+function escapeHtml(value) {
+  return String(value || '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#039;');
+}
+
+// ===============================
 // 첫 화면
 // ===============================
 app.get('/', (req, res) => {
@@ -284,23 +349,23 @@ app.get('/', (req, res) => {
     <div class="card">
       <h1>SM1357 SERVER OK</h1>
       <p class="ok">외부 서버가 정상 실행 중입니다.</p>
-      <p class="muted">이미지 업로드 버전입니다.</p>
+      <p class="muted">회원 20개 + 관리자 로그인 적용 버전입니다.</p>
       <div class="row">
-        <a class="btn btn-blue" href="/login">로그인 페이지</a>
-        <a class="btn" href="/admin">관리자 페이지</a>
+        <a class="btn btn-blue" href="/login">회원 로그인</a>
+        <a class="btn" href="/admin-login">관리자 로그인</a>
       </div>
     </div>
   `));
 });
 
 // ===============================
-// 로그인 페이지
+// 회원 로그인 페이지
 // ===============================
 app.get('/login', (req, res) => {
   res.send(layout('SM1357 로그인', `
     <div class="card" style="max-width:420px;margin:60px auto;">
       <h1>SM1357 로그인</h1>
-      <p class="muted">테스트 계정: vip001 / 1234</p>
+      <p class="muted">회원 계정: vip001 ~ vip020 / 비밀번호 1234</p>
 
       <form method="POST" action="/login">
         <label>아이디</label>
@@ -311,12 +376,16 @@ app.get('/login', (req, res) => {
 
         <button type="submit" style="width:100%;">로그인</button>
       </form>
+
+      <div style="margin-top:16px;">
+        <a class="btn btn-gray" href="/admin-login">관리자 로그인</a>
+      </div>
     </div>
   `));
 });
 
 // ===============================
-// 로그인 처리
+// 회원 로그인 처리
 // ===============================
 app.post('/login', (req, res) => {
   const { username, password } = req.body;
@@ -354,10 +423,9 @@ app.get('/betman', (req, res) => {
     <div class="top">
       <div>
         <h1>회원 페이지</h1>
-        <p class="muted">로그인 회원: <b>${username}</b></p>
+        <p class="muted">로그인 회원: <b>${escapeHtml(username)}</b></p>
       </div>
       <div class="row">
-        <a class="btn" href="/admin">관리자</a>
         <a class="btn btn-red" href="/login">로그아웃</a>
       </div>
     </div>
@@ -366,24 +434,20 @@ app.get('/betman', (req, res) => {
       <h2>배트맨 열기</h2>
       <p class="muted">
         아래 버튼을 누르면 배트맨 사이트가 새 창으로 열립니다.
-        최종 구매내역 화면을 캡처한 뒤 이미지 선택해서 보내면 됩니다.
+        확장프로그램이 설치되어 있으면 배트맨 화면 오른쪽 아래에 구매내역 보내기 버튼이 표시됩니다.
       </p>
 
       <div class="row">
         <a class="btn btn-blue" href="https://www.betman.co.kr" target="_blank">배트맨 열기</a>
-        <a class="btn btn-gray" href="/admin" target="_blank">관리자 새 창</a>
       </div>
     </div>
 
     <div class="card">
-      <h2>구매내역 보내기</h2>
+      <h2>수동 구매내역 보내기</h2>
 
       <div class="notice">
-        1. 배트맨에서 최종 구매내역 화면까지 이동<br>
-        2. 화면 캡처 또는 스크린샷 저장<br>
-        3. 아래에서 이미지 선택<br>
-        4. 구매내역 보내기 클릭<br>
-        5. 관리자 페이지에서 확인
+        확장프로그램이 안 될 때만 사용하는 예비 기능입니다.<br>
+        배트맨 화면을 캡처한 이미지를 직접 선택해서 관리자에게 보낼 수 있습니다.
       </div>
 
       <label>메모</label>
@@ -532,9 +596,63 @@ app.post('/api/send', (req, res) => {
 });
 
 // ===============================
+// 관리자 로그인 페이지
+// ===============================
+app.get('/admin-login', (req, res) => {
+  res.send(layout('SM1357 관리자 로그인', `
+    <div class="card" style="max-width:420px;margin:60px auto;">
+      <h1>관리자 로그인</h1>
+      <p class="muted">관리자만 접속할 수 있습니다.</p>
+
+      <form method="POST" action="/admin-login">
+        <label>관리자 아이디</label>
+        <input name="adminId" placeholder="관리자 아이디" required />
+
+        <label>관리자 비밀번호</label>
+        <input name="adminPassword" type="password" placeholder="관리자 비밀번호" required />
+
+        <button type="submit" style="width:100%;">관리자 로그인</button>
+      </form>
+
+      <div style="margin-top:16px;">
+        <a class="btn btn-blue" href="/login">회원 로그인으로 이동</a>
+      </div>
+    </div>
+  `));
+});
+
+// ===============================
+// 관리자 로그인 처리
+// ===============================
+app.post('/admin-login', (req, res) => {
+  const { adminId, adminPassword } = req.body;
+
+  if (adminId !== ADMIN_ID || adminPassword !== ADMIN_PASSWORD) {
+    return res.send(layout('관리자 로그인 실패', `
+      <div class="card">
+        <h1 class="bad">관리자 로그인 실패</h1>
+        <p>아이디 또는 비밀번호가 틀렸습니다.</p>
+        <a class="btn btn-blue" href="/admin-login">다시 로그인</a>
+      </div>
+    `));
+  }
+
+  res.setHeader('Set-Cookie', 'sm1357_admin=yes; Path=/; Max-Age=86400; HttpOnly; SameSite=Lax');
+  res.redirect('/admin');
+});
+
+// ===============================
+// 관리자 로그아웃
+// ===============================
+app.get('/admin-logout', (req, res) => {
+  res.setHeader('Set-Cookie', 'sm1357_admin=; Path=/; Max-Age=0; HttpOnly; SameSite=Lax');
+  res.redirect('/admin-login');
+});
+
+// ===============================
 // 관리자 페이지
 // ===============================
-app.get('/admin', (req, res) => {
+app.get('/admin', requireAdmin, (req, res) => {
   const rows = purchaseList.map((item, index) => {
     const memoHtml = escapeHtml(item.memo).replace(/\\n/g, '<br>');
 
@@ -572,9 +690,9 @@ app.get('/admin', (req, res) => {
         <p class="muted">회원이 보낸 구매내역 이미지와 메모를 확인하는 화면입니다.</p>
       </div>
       <div class="row">
-        <a class="btn btn-blue" href="/login">로그인</a>
         <a class="btn" href="/admin">새로고침</a>
         <a class="btn btn-red" href="/admin/clear" onclick="return confirm('전체 구매내역을 삭제할까요?')">전체삭제</a>
+        <a class="btn btn-gray" href="/admin-logout">관리자 로그아웃</a>
       </div>
     </div>
 
@@ -637,7 +755,7 @@ app.get('/admin', (req, res) => {
 // ===============================
 // 관리자 데이터 전체 삭제
 // ===============================
-app.get('/admin/clear', (req, res) => {
+app.get('/admin/clear', requireAdmin, (req, res) => {
   purchaseList = [];
   res.redirect('/admin');
 });
@@ -645,25 +763,13 @@ app.get('/admin/clear', (req, res) => {
 // ===============================
 // 관리자 JSON 확인용
 // ===============================
-app.get('/api/list', (req, res) => {
+app.get('/api/list', requireAdmin, (req, res) => {
   res.json({
     success: true,
     count: purchaseList.length,
     list: purchaseList
   });
 });
-
-// ===============================
-// HTML 이스케이프
-// ===============================
-function escapeHtml(value) {
-  return String(value || '')
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&#039;');
-}
 
 // ===============================
 // 없는 주소 처리
@@ -675,8 +781,8 @@ app.use((req, res) => {
       <p class="muted">요청 주소: ${escapeHtml(req.originalUrl)}</p>
       <div class="row">
         <a class="btn btn-blue" href="/">첫 화면</a>
-        <a class="btn" href="/login">로그인</a>
-        <a class="btn" href="/admin">관리자</a>
+        <a class="btn" href="/login">회원 로그인</a>
+        <a class="btn btn-gray" href="/admin-login">관리자 로그인</a>
       </div>
     </div>
   `));
