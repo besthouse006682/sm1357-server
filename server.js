@@ -1,11 +1,12 @@
 const express = require('express');
 const app = express();
 
-app.use(express.urlencoded({ extended: true }));
+app.use(express.urlencoded({ extended: true, limit: '50mb' }));
 app.use(express.json({ limit: '50mb' }));
 
+// ===============================
 // 임시 회원 목록
-// 나중에 DB로 바꿀 수 있음
+// ===============================
 const USERS = {
   vip001: '1234',
   vip002: '1234',
@@ -14,12 +15,15 @@ const USERS = {
   admin: 'admin1234'
 };
 
-// 임시 저장소
-// 서버 재시작하면 초기화됨
-// 나중에 DB로 바꿀 수 있음
+// ===============================
+// 임시 구매내역 저장소
+// Render 서버 재시작 시 초기화됨
+// ===============================
 let purchaseList = [];
 
-// 공통 HTML 스타일
+// ===============================
+// 공통 HTML 레이아웃
+// ===============================
 function layout(title, body) {
   return `
 <!DOCTYPE html>
@@ -48,6 +52,7 @@ function layout(title, body) {
       border-radius: 14px;
       padding: 24px;
       box-shadow: 0 10px 25px rgba(0,0,0,0.25);
+      margin-bottom: 20px;
     }
 
     h1, h2, h3 {
@@ -67,6 +72,12 @@ function layout(title, body) {
       border: 1px solid #4b5563;
       background: #111827;
       color: #fff;
+    }
+
+    input[type="file"] {
+      background: #0f172a;
+      border: 1px dashed #64748b;
+      cursor: pointer;
     }
 
     button, .btn {
@@ -101,6 +112,14 @@ function layout(title, body) {
       background: #1d4ed8;
     }
 
+    .btn-gray {
+      background: #4b5563;
+    }
+
+    .btn-gray:hover {
+      background: #374151;
+    }
+
     .top {
       display: flex;
       justify-content: space-between;
@@ -112,6 +131,42 @@ function layout(title, body) {
     .muted {
       color: #9ca3af;
       font-size: 14px;
+    }
+
+    .ok {
+      color: #22c55e;
+      font-weight: bold;
+    }
+
+    .bad {
+      color: #ef4444;
+      font-weight: bold;
+    }
+
+    .row {
+      display: flex;
+      gap: 10px;
+      flex-wrap: wrap;
+      align-items: center;
+    }
+
+    .preview-img {
+      display: none;
+      max-width: 100%;
+      max-height: 420px;
+      margin-top: 12px;
+      border-radius: 10px;
+      border: 1px solid #374151;
+      background: #000;
+    }
+
+    .admin-img {
+      max-width: 220px;
+      max-height: 180px;
+      border-radius: 8px;
+      border: 1px solid #374151;
+      cursor: pointer;
+      background: #000;
     }
 
     table {
@@ -135,46 +190,57 @@ function layout(title, body) {
       color: #d1d5db;
     }
 
-    .ok {
-      color: #22c55e;
+    .status {
+      display: inline-block;
+      padding: 5px 9px;
+      border-radius: 999px;
+      background: #7c2d12;
+      color: #fed7aa;
+      font-size: 13px;
       font-weight: bold;
     }
 
-    .bad {
-      color: #ef4444;
-      font-weight: bold;
+    .modal {
+      display: none;
+      position: fixed;
+      z-index: 9999;
+      inset: 0;
+      background: rgba(0,0,0,0.85);
+      align-items: center;
+      justify-content: center;
+      padding: 20px;
     }
 
-    iframe {
-      width: 100%;
-      height: 75vh;
+    .modal img {
+      max-width: 95vw;
+      max-height: 90vh;
+      border-radius: 10px;
+      border: 1px solid #334155;
+      background: #000;
+    }
+
+    .modal-close {
+      position: fixed;
+      top: 18px;
+      right: 18px;
+      background: #dc2626;
+      color: #fff;
       border: 0;
-      border-radius: 12px;
-      background: white;
+      border-radius: 8px;
+      padding: 10px 14px;
+      cursor: pointer;
+      font-weight: bold;
     }
 
-    .row {
-      display: flex;
-      gap: 10px;
-      flex-wrap: wrap;
-    }
-
-    .row .btn {
-      margin-bottom: 8px;
-    }
-
-    .capture-box {
-      margin-top: 20px;
-      padding: 16px;
+    .notice {
+      padding: 12px;
       background: #0f172a;
       border: 1px solid #334155;
-      border-radius: 12px;
-    }
-
-    img {
-      max-width: 260px;
-      border-radius: 8px;
-      border: 1px solid #374151;
+      border-radius: 10px;
+      margin-bottom: 14px;
+      color: #cbd5e1;
+      font-size: 14px;
+      line-height: 1.6;
     }
 
     @media (max-width: 700px) {
@@ -193,6 +259,11 @@ function layout(title, body) {
       td {
         border-bottom: 1px solid #374151;
       }
+
+      .admin-img {
+        max-width: 100%;
+        max-height: none;
+      }
     }
   </style>
 </head>
@@ -205,13 +276,15 @@ function layout(title, body) {
   `;
 }
 
-// 서버 상태 확인
+// ===============================
+// 첫 화면
+// ===============================
 app.get('/', (req, res) => {
   res.send(layout('SM1357 SERVER', `
     <div class="card">
       <h1>SM1357 SERVER OK</h1>
       <p class="ok">외부 서버가 정상 실행 중입니다.</p>
-      <p class="muted">Render 배포 확인 완료용 첫 화면입니다.</p>
+      <p class="muted">이미지 업로드 버전입니다.</p>
       <div class="row">
         <a class="btn btn-blue" href="/login">로그인 페이지</a>
         <a class="btn" href="/admin">관리자 페이지</a>
@@ -220,7 +293,9 @@ app.get('/', (req, res) => {
   `));
 });
 
+// ===============================
 // 로그인 페이지
+// ===============================
 app.get('/login', (req, res) => {
   res.send(layout('SM1357 로그인', `
     <div class="card" style="max-width:420px;margin:60px auto;">
@@ -240,7 +315,9 @@ app.get('/login', (req, res) => {
   `));
 });
 
+// ===============================
 // 로그인 처리
+// ===============================
 app.post('/login', (req, res) => {
   const { username, password } = req.body;
 
@@ -267,7 +344,9 @@ app.post('/login', (req, res) => {
   res.redirect(`/betman?user=${encodeURIComponent(username)}`);
 });
 
-// 로그인 후 페이지
+// ===============================
+// 회원 페이지
+// ===============================
 app.get('/betman', (req, res) => {
   const username = req.query.user || 'unknown';
 
@@ -287,85 +366,150 @@ app.get('/betman', (req, res) => {
       <h2>배트맨 열기</h2>
       <p class="muted">
         아래 버튼을 누르면 배트맨 사이트가 새 창으로 열립니다.
-        앱에서는 나중에 이 부분을 WebView 방식으로 연결하면 됩니다.
+        최종 구매내역 화면을 캡처한 뒤 이미지 선택해서 보내면 됩니다.
       </p>
 
       <div class="row">
         <a class="btn btn-blue" href="https://www.betman.co.kr" target="_blank">배트맨 열기</a>
-        <button onclick="sendTest()">구매내역 보내기 테스트</button>
+        <a class="btn btn-gray" href="/admin" target="_blank">관리자 새 창</a>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>구매내역 보내기</h2>
+
+      <div class="notice">
+        1. 배트맨에서 최종 구매내역 화면까지 이동<br>
+        2. 화면 캡처 또는 스크린샷 저장<br>
+        3. 아래에서 이미지 선택<br>
+        4. 구매내역 보내기 클릭<br>
+        5. 관리자 페이지에서 확인
       </div>
 
-      <div class="capture-box">
-        <h3>구매내역 보내기 테스트</h3>
-        <p class="muted">
-          지금은 이미지 캡처 전 단계라서 테스트 데이터만 관리자페이지로 보냅니다.
-          다음 단계에서 실제 화면 이미지 저장 기능을 붙이면 됩니다.
-        </p>
+      <label>메모</label>
+      <textarea id="memo" rows="5">구매내역 이미지 첨부합니다.</textarea>
 
-        <textarea id="memo" rows="5">테스트 구매내역입니다.
-회원이 최종 구매내역 화면에서 구매내역 보내기 버튼을 눌렀다고 가정합니다.</textarea>
+      <label>구매내역 이미지 선택</label>
+      <input id="imageFile" type="file" accept="image/*" />
 
-        <button onclick="sendMemo()">현재 내용 보내기</button>
+      <img id="preview" class="preview-img" />
 
-        <p id="result" class="muted"></p>
+      <div class="row" style="margin-top:16px;">
+        <button onclick="sendPurchase()">구매내역 보내기</button>
+        <button class="btn-gray" onclick="clearImage()">이미지 지우기</button>
       </div>
+
+      <p id="result" class="muted"></p>
     </div>
 
     <script>
       const username = ${JSON.stringify(username)};
+      let selectedImage = '';
 
-      function sendTest() {
-        fetch('/api/send', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            username,
-            type: 'TEST',
-            memo: '구매내역 보내기 테스트',
-            image: ''
-          })
-        })
-        .then(res => res.json())
-        .then(data => {
-          document.getElementById('result').innerText = data.success
-            ? '전송 완료: 관리자페이지에서 확인하세요.'
-            : '전송 실패';
-        })
-        .catch(() => {
-          document.getElementById('result').innerText = '전송 오류';
-        });
+      const imageFile = document.getElementById('imageFile');
+      const preview = document.getElementById('preview');
+      const result = document.getElementById('result');
+
+      imageFile.addEventListener('change', function () {
+        const file = this.files[0];
+
+        if (!file) {
+          selectedImage = '';
+          preview.style.display = 'none';
+          return;
+        }
+
+        if (!file.type.startsWith('image/')) {
+          alert('이미지 파일만 선택 가능합니다.');
+          this.value = '';
+          selectedImage = '';
+          preview.style.display = 'none';
+          return;
+        }
+
+        if (file.size > 8 * 1024 * 1024) {
+          alert('이미지가 너무 큽니다. 8MB 이하 이미지를 선택하세요.');
+          this.value = '';
+          selectedImage = '';
+          preview.style.display = 'none';
+          return;
+        }
+
+        const reader = new FileReader();
+
+        reader.onload = function (e) {
+          selectedImage = e.target.result;
+          preview.src = selectedImage;
+          preview.style.display = 'block';
+          result.innerText = '이미지 선택 완료';
+        };
+
+        reader.readAsDataURL(file);
+      });
+
+      function clearImage() {
+        imageFile.value = '';
+        selectedImage = '';
+        preview.src = '';
+        preview.style.display = 'none';
+        result.innerText = '이미지를 지웠습니다.';
       }
 
-      function sendMemo() {
-        const memo = document.getElementById('memo').value;
+      function sendPurchase() {
+        const memo = document.getElementById('memo').value.trim();
+
+        if (!memo && !selectedImage) {
+          alert('메모 또는 이미지를 입력하세요.');
+          return;
+        }
+
+        result.innerText = '전송 중입니다...';
 
         fetch('/api/send', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             username,
-            type: 'MEMO',
+            type: selectedImage ? 'IMAGE' : 'MEMO',
             memo,
-            image: ''
+            image: selectedImage
           })
         })
         .then(res => res.json())
         .then(data => {
-          document.getElementById('result').innerText = data.success
-            ? '전송 완료: 관리자페이지에서 확인하세요.'
-            : '전송 실패';
+          if (data.success) {
+            result.innerText = '전송 완료. 관리자 페이지에서 확인하세요.';
+          } else {
+            result.innerText = '전송 실패: ' + (data.message || '알 수 없는 오류');
+          }
         })
         .catch(() => {
-          document.getElementById('result').innerText = '전송 오류';
+          result.innerText = '전송 오류가 발생했습니다.';
         });
       }
     </script>
   `));
 });
 
+// ===============================
 // 구매내역 전송 API
+// ===============================
 app.post('/api/send', (req, res) => {
   const { username, type, memo, image } = req.body;
+
+  if (!username) {
+    return res.status(400).json({
+      success: false,
+      message: '회원 정보가 없습니다.'
+    });
+  }
+
+  if (!memo && !image) {
+    return res.status(400).json({
+      success: false,
+      message: '메모 또는 이미지가 필요합니다.'
+    });
+  }
 
   const item = {
     id: Date.now(),
@@ -387,33 +531,50 @@ app.post('/api/send', (req, res) => {
   });
 });
 
+// ===============================
 // 관리자 페이지
+// ===============================
 app.get('/admin', (req, res) => {
   const rows = purchaseList.map((item, index) => {
+    const memoHtml = escapeHtml(item.memo).replace(/\\n/g, '<br>');
+
     return `
       <tr>
         <td>${index + 1}</td>
-        <td>${item.username}</td>
-        <td>${item.type}</td>
-        <td>${item.memo.replace(/\n/g, '<br>')}</td>
-        <td>${item.status}</td>
-        <td>${item.createdAt}</td>
+        <td><b>${escapeHtml(item.username)}</b></td>
+        <td>${escapeHtml(item.type)}</td>
+        <td>${memoHtml || '<span class="muted">메모 없음</span>'}</td>
+        <td><span class="status">${escapeHtml(item.status)}</span></td>
+        <td>${escapeHtml(item.createdAt)}</td>
         <td>
-          ${item.image ? `<img src="${item.image}" />` : '<span class="muted">이미지 없음</span>'}
+          ${
+            item.image
+              ? `<img class="admin-img" src="${item.image}" onclick="openImage('${item.id}')" />
+                 <div style="margin-top:8px;">
+                   <button onclick="openImage('${item.id}')">크게 보기</button>
+                 </div>`
+              : '<span class="muted">이미지 없음</span>'
+          }
         </td>
       </tr>
     `;
   }).join('');
 
+  const imageMap = {};
+  purchaseList.forEach(item => {
+    if (item.image) imageMap[item.id] = item.image;
+  });
+
   res.send(layout('SM1357 관리자', `
     <div class="top">
       <div>
         <h1>관리자 페이지</h1>
-        <p class="muted">회원이 보낸 구매내역을 확인하는 화면입니다.</p>
+        <p class="muted">회원이 보낸 구매내역 이미지와 메모를 확인하는 화면입니다.</p>
       </div>
       <div class="row">
         <a class="btn btn-blue" href="/login">로그인</a>
         <a class="btn" href="/admin">새로고침</a>
+        <a class="btn btn-red" href="/admin/clear" onclick="return confirm('전체 구매내역을 삭제할까요?')">전체삭제</a>
       </div>
     </div>
 
@@ -443,10 +604,47 @@ app.get('/admin', (req, res) => {
           `
       }
     </div>
+
+    <div id="modal" class="modal" onclick="closeImage()">
+      <button class="modal-close" onclick="closeImage()">닫기</button>
+      <img id="modalImg" src="" />
+    </div>
+
+    <script>
+      const imageMap = ${JSON.stringify(imageMap)};
+
+      function openImage(id) {
+        const modal = document.getElementById('modal');
+        const modalImg = document.getElementById('modalImg');
+
+        if (!imageMap[id]) return;
+
+        modalImg.src = imageMap[id];
+        modal.style.display = 'flex';
+      }
+
+      function closeImage() {
+        const modal = document.getElementById('modal');
+        const modalImg = document.getElementById('modalImg');
+
+        modal.style.display = 'none';
+        modalImg.src = '';
+      }
+    </script>
   `));
 });
 
-// 관리자 데이터 JSON 확인용
+// ===============================
+// 관리자 데이터 전체 삭제
+// ===============================
+app.get('/admin/clear', (req, res) => {
+  purchaseList = [];
+  res.redirect('/admin');
+});
+
+// ===============================
+// 관리자 JSON 확인용
+// ===============================
 app.get('/api/list', (req, res) => {
   res.json({
     success: true,
@@ -455,12 +653,26 @@ app.get('/api/list', (req, res) => {
   });
 });
 
+// ===============================
+// HTML 이스케이프
+// ===============================
+function escapeHtml(value) {
+  return String(value || '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#039;');
+}
+
+// ===============================
 // 없는 주소 처리
+// ===============================
 app.use((req, res) => {
   res.status(404).send(layout('Not Found', `
     <div class="card">
       <h1>페이지를 찾을 수 없습니다.</h1>
-      <p class="muted">요청 주소: ${req.originalUrl}</p>
+      <p class="muted">요청 주소: ${escapeHtml(req.originalUrl)}</p>
       <div class="row">
         <a class="btn btn-blue" href="/">첫 화면</a>
         <a class="btn" href="/login">로그인</a>
@@ -470,7 +682,9 @@ app.use((req, res) => {
   `));
 });
 
-// Render 호환 포트 설정
+// ===============================
+// Render 호환 포트
+// ===============================
 const PORT = process.env.PORT || 3000;
 
 app.listen(PORT, () => {
