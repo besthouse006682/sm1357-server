@@ -1,5 +1,6 @@
 const express = require('express');
 const app = express();
+const path = require('path');
 
 app.use(express.urlencoded({ extended: true, limit: '50mb' }));
 app.use(express.json({ limit: '50mb' }));
@@ -283,6 +284,71 @@ function layout(title, body) {
       background: #000;
     }
 
+    .download-card {
+  margin-bottom: 22px;
+  border: 1px solid #31445f;
+  background: #1f2a3a;
+}
+
+.download-card h2 {
+  margin-bottom: 14px;
+  font-size: 26px;
+  color: #ffffff;
+}
+
+.download-desc {
+  color: #b8c7dc;
+  line-height: 1.7;
+  margin-bottom: 18px;
+}
+
+.download-buttons {
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-bottom: 16px;
+}
+
+.download-btn {
+  display: inline-block;
+  padding: 14px 20px;
+  border-radius: 8px;
+  color: #ffffff;
+  font-weight: 800;
+  text-decoration: none;
+}
+
+.mobile-btn {
+  background: #16a34a;
+}
+
+.mobile-btn:hover {
+  background: #15803d;
+}
+
+.windows-btn {
+  background: #2563eb;
+}
+
+.windows-btn:hover {
+  background: #1d4ed8;
+}
+
+.download-guide {
+  margin-top: 12px;
+  padding: 12px 14px;
+  border-radius: 8px;
+  background: #111827;
+  border: 1px solid #334155;
+  color: #cbd5e1;
+  font-size: 14px;
+  line-height: 1.6;
+}
+
+.download-guide p {
+  margin: 4px 0;
+}
+
     .modal-close {
       position: fixed;
       top: 18px;
@@ -424,6 +490,29 @@ app.get('/betman', (req, res) => {
       <div>
         <h1>회원 페이지</h1>
         <p class="muted">로그인 회원: <b>${escapeHtml(username)}</b></p>
+        <div class="card download-card">
+  <h2>SM1357 프로그램 다운로드</h2>
+
+  <p class="download-desc">
+    모바일 사용자는 <b>모바일용 앱</b>을 설치하세요.<br>
+    PC 사용자는 <b>윈도우용 확장프로그램</b>을 설치하세요.
+  </p>
+
+  <div class="download-buttons">
+    <a class="download-btn mobile-btn" href="/download/mobile">
+      모바일용 다운로드
+    </a>
+
+    <a class="download-btn windows-btn" href="/download/windows">
+      윈도우용 다운로드
+    </a>
+  </div>
+
+  <div class="download-guide">
+    <p>모바일: APK 설치 후 앱 안에서 배트맨에 접속합니다.</p>
+    <p>윈도우: ZIP 압축을 풀고 크롬 확장프로그램에서 등록합니다.</p>
+  </div>
+</div>
       </div>
       <div class="row">
         <a class="btn btn-red" href="/login">로그아웃</a>
@@ -792,6 +881,14 @@ app.use((req, res) => {
 // Render 호환 포트
 // ===============================
 const PORT = process.env.PORT || 3000;
+
+app.get('/download/mobile', (req, res) => {
+  res.download(path.join(__dirname, 'public', 'sm1357-mobile.apk'));
+});
+
+app.get('/download/windows', (req, res) => {
+  res.download(path.join(__dirname, 'public', 'sm1357-pc-extension.zip'));
+});
 
 app.listen(PORT, () => {
   console.log(`SERVER START on port ${PORT}`);
