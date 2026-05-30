@@ -860,6 +860,14 @@ app.get('/api/list', requireAdmin, (req, res) => {
   });
 });
 
+app.get('/download/mobile', (req, res) => {
+  res.download(path.join(__dirname, 'public', 'sm1357-mobile.apk'));
+});
+
+app.get('/download/windows', (req, res) => {
+  res.download(path.join(__dirname, 'public', 'sm1357-pc-extension.zip'));
+});
+
 // ===============================
 // 없는 주소 처리
 // ===============================
@@ -881,14 +889,6 @@ app.use((req, res) => {
 // Render 호환 포트
 // ===============================
 const PORT = process.env.PORT || 3000;
-
-app.get('/download/mobile', (req, res) => {
-  res.download(path.join(__dirname, 'public', 'sm1357-mobile.apk'));
-});
-
-app.get('/download/windows', (req, res) => {
-  res.download(path.join(__dirname, 'public', 'sm1357-pc-extension.zip'));
-});
 
 app.listen(PORT, () => {
   console.log(`SERVER START on port ${PORT}`);
