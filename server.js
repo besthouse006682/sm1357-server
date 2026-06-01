@@ -513,6 +513,10 @@ app.get('/betman', (req, res) => {
           <span class="status ${getStatusClass(item.status)}">${escapeHtml(item.status)}</span>
           <span class="muted">${escapeHtml(item.createdAt)}</span>
           ${item.memo ? `<span class="muted">${escapeHtml(item.memo)}</span>` : ''}
+          <form method="POST" action="/member/delete/${encodeURIComponent(String(item.id))}" onsubmit="return confirm('이 구매내역을 삭제할까요?');">
+            <input type="hidden" name="username" value="${escapeHtml(username)}" />
+            <button class="btn-small btn-red" type="submit">삭제</button>
+          </form>
         </div>
       </div>
     `;
@@ -586,6 +590,24 @@ app.get('/betman', (req, res) => {
       }
     </script>
   `));
+});
+
+// ===============================
+// 회원: 본인 구매내역 개별 삭제
+// ===============================
+app.post('/member/delete/:id', (req, res) => {
+  const id = Number(req.params.id);
+  const username = req.body.username;
+
+  if (!username || !USERS[username]) {
+    return res.redirect('/login');
+  }
+
+  purchaseList = purchaseList.filter((purchase) => {
+    return !(purchase.id === id && purchase.username === username);
+  });
+
+  res.redirect(`/betman?user=${encodeURIComponent(username)}`);
 });
 
 // ===============================
