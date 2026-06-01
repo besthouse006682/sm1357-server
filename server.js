@@ -533,7 +533,10 @@ app.get('/betman', (req, res) => {
         <h1>회원 페이지</h1>
         <p class="muted">로그인 회원: <b>${escapeHtml(username)}</b></p>
       </div>
-      <a class="btn btn-red" href="/login">로그아웃</a>
+      <div class="row">
+        <a class="btn btn-blue" href="/betman?user=${encodeURIComponent(username)}">새로고침</a>
+        <a class="btn btn-red" href="/login">로그아웃</a>
+      </div>
     </div>
 
     <div class="card download-card">
