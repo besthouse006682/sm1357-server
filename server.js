@@ -25,6 +25,14 @@ function parseCookies(req) {
   return list;
 }
 
+function setCookie(res, name, value, maxAgeSeconds) {
+  res.append('Set-Cookie', `${name}=${encodeURIComponent(value)}; Path=/; Max-Age=${maxAgeSeconds}; HttpOnly; SameSite=Lax`);
+}
+
+function clearCookie(res, name) {
+  res.append('Set-Cookie', `${name}=; Path=/; Max-Age=0; HttpOnly; SameSite=Lax`);
+}
+
 function isAdminLoggedIn(req) {
   const cookies = parseCookies(req);
   return cookies.sm1357_admin === 'yes';
@@ -34,7 +42,21 @@ function requireAdmin(req, res, next) {
   if (!isAdminLoggedIn(req)) {
     return res.redirect('/admin-login');
   }
+  next();
+}
 
+function getLoggedInMember(req) {
+  const cookies = parseCookies(req);
+  const username = cookies.sm1357_member || '';
+  return USERS[username] ? username : '';
+}
+
+function requireMember(req, res, next) {
+  const username = getLoggedInMember(req);
+  if (!username) {
+    return res.redirect('/login');
+  }
+  req.memberId = username;
   next();
 }
 
@@ -101,7 +123,7 @@ function layout(title, body) {
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>${title}</title>
+  <title>${escapeHtml(title)}</title>
   <style>
     * { box-sizing: border-box; }
 
@@ -157,7 +179,6 @@ function layout(title, body) {
     }
 
     button:hover, .btn:hover { background: #15803d; }
-
     .btn-red { background: #dc2626; }
     .btn-red:hover { background: #b91c1c; }
     .btn-blue { background: #2563eb; }
@@ -175,15 +196,11 @@ function layout(title, body) {
       align-items: center;
     }
 
-    .muted {
-      color: #9ca3af;
-      font-size: 14px;
-    }
-
+    .muted { color: #9ca3af; font-size: 14px; }
     .ok { color: #22c55e; font-weight: bold; }
     .bad { color: #ef4444; font-weight: bold; }
 
-    /* 회원 상단: 모바일에서도 로그아웃 우측 유지 */
+    /* 회원 상단 */
     .member-header {
       display: flex;
       justify-content: space-between;
@@ -192,11 +209,9 @@ function layout(title, body) {
       margin-bottom: 22px;
     }
 
-    .member-header h1 {
-      margin-bottom: 10px;
-    }
+    .member-header h1 { margin-bottom: 10px; }
 
-    /* 다운로드 */
+    /* 다운로드 카드 */
     .download-card {
       border: 1px solid #31445f;
       background: #1f2a3a;
@@ -274,6 +289,7 @@ function layout(title, body) {
       border: 1px solid #374151;
       background: #000;
       cursor: pointer;
+      flex-shrink: 0;
     }
 
     .history-info {
@@ -353,10 +369,7 @@ function layout(title, body) {
       vertical-align: top;
     }
 
-    th {
-      background: #0f172a;
-      color: #d1d5db;
-    }
+    th { background: #0f172a; color: #d1d5db; }
 
     /* 이미지 확대 */
     .modal {
@@ -399,23 +412,10 @@ function layout(title, body) {
       .download-card h2 { font-size: 23px; }
       .download-buttons { flex-direction: column; }
       .download-btn { width: 100%; text-align: center; }
-
-      .history-item {
-        align-items: flex-start;
-      }
-
-      .member-img {
-        width: 128px;
-        height: 105px;
-        flex-shrink: 0;
-      }
-
-      .admin-top {
-        display: block;
-      }
-
+      .history-item { align-items: flex-start; }
+      .member-img { width: 128px; height: 105px; }
+      .admin-top { display: block; }
       .admin-top .row { margin-top: 15px; }
-
       table, thead, tbody, th, td, tr { display: block; }
       th { display: none; }
       td { border-bottom: 1px solid #374151; }
@@ -434,20 +434,11 @@ function layout(title, body) {
 }
 
 // ===============================
-// 첫 화면
+// 첫 화면: 회원 로그인으로 바로 이동
+// 관리자는 /admin-login 주소를 직접 사용
 // ===============================
 app.get('/', (req, res) => {
-  res.send(layout('SM1357 SERVER', `
-    <div class="card">
-      <h1>SM1357 SERVER OK</h1>
-      <p class="ok">외부 서버가 정상 실행 중입니다.</p>
-      <p class="muted">회원 20개 + 관리자 로그인 적용 버전입니다.</p>
-      <div class="row">
-        <a class="btn btn-blue" href="/login">회원 로그인</a>
-        <a class="btn" href="/admin-login">관리자 로그인</a>
-      </div>
-    </div>
-  `));
+  res.redirect('/login');
 });
 
 // ===============================
@@ -468,10 +459,6 @@ app.get('/login', (req, res) => {
 
         <button type="submit" style="width:100%;">로그인</button>
       </form>
-
-      <div style="margin-top:16px;">
-        <a class="btn btn-gray" href="/admin-login">관리자 로그인</a>
-      </div>
     </div>
   `));
 });
@@ -492,35 +479,41 @@ app.post('/login', (req, res) => {
     `));
   }
 
+  setCookie(res, 'sm1357_member', username, 86400);
   res.redirect(`/betman?user=${encodeURIComponent(username)}`);
+});
+
+// ===============================
+// 회원 로그아웃
+// ===============================
+app.get('/member-logout', (req, res) => {
+  clearCookie(res, 'sm1357_member');
+  res.redirect('/login');
 });
 
 // ===============================
 // 회원 페이지
 // ===============================
-app.get('/betman', (req, res) => {
-  const username = req.query.user || 'unknown';
+app.get('/betman', requireMember, (req, res) => {
+  const username = req.memberId;
   const myList = purchaseList.filter((item) => item.username === username);
 
-  const myRows = myList.map((item) => {
-    return `
-      <div class="history-item">
-        ${item.image
-          ? `<img class="member-img" src="${item.image}" onclick="openMemberImage('${item.id}')" alt="구매내역 이미지" />`
-          : '<div class="member-img" style="display:flex;align-items:center;justify-content:center;color:#9ca3af;">이미지 없음</div>'
-        }
-        <div class="history-info">
-          <span class="status ${getStatusClass(item.status)}">${escapeHtml(item.status)}</span>
-          <span class="muted">${escapeHtml(item.createdAt)}</span>
-          ${item.memo ? `<span class="muted">${escapeHtml(item.memo)}</span>` : ''}
-          <form method="POST" action="/member/delete/${encodeURIComponent(String(item.id))}" onsubmit="return confirm('이 구매내역을 삭제할까요?');">
-            <input type="hidden" name="username" value="${escapeHtml(username)}" />
-            <button class="btn-small btn-red" type="submit">삭제</button>
-          </form>
-        </div>
+  const myRows = myList.map((item) => `
+    <div class="history-item">
+      ${item.image
+        ? `<img class="member-img" src="${item.image}" onclick="openMemberImage('${item.id}')" alt="구매내역 이미지" />`
+        : '<div class="member-img" style="display:flex;align-items:center;justify-content:center;color:#9ca3af;">이미지 없음</div>'
+      }
+      <div class="history-info">
+        <span class="status ${getStatusClass(item.status)}">${escapeHtml(item.status)}</span>
+        <span class="muted">${escapeHtml(item.createdAt)}</span>
+        ${item.memo ? `<span class="muted">${escapeHtml(item.memo)}</span>` : ''}
+        <form method="POST" action="/member/delete/${encodeURIComponent(String(item.id))}" onsubmit="return confirm('이 구매내역을 삭제할까요?');">
+          <button class="btn-small btn-red" type="submit">삭제</button>
+        </form>
       </div>
-    `;
-  }).join('');
+    </div>
+  `).join('');
 
   const memberImageMap = {};
   myList.forEach((item) => {
@@ -535,7 +528,7 @@ app.get('/betman', (req, res) => {
       </div>
       <div class="row">
         <a class="btn btn-blue" href="/betman?user=${encodeURIComponent(username)}">새로고침</a>
-        <a class="btn btn-red" href="/login">로그아웃</a>
+        <a class="btn btn-red" href="/member-logout">로그아웃</a>
       </div>
     </div>
 
@@ -558,7 +551,7 @@ app.get('/betman', (req, res) => {
     <div class="card">
       <h2>배트맨 열기</h2>
       <p class="muted">
-        아래 버튼을 누르면 배트맨 사이트가 새 창으로 열립니다.<br>
+        아래 버튼을 누르면 배트맨 사이트가 열립니다.<br>
         설치된 프로그램에서 구매내역을 보내면 아래 내역에 표시됩니다.
       </p>
       <a class="btn btn-blue" href="https://www.betman.co.kr" target="_blank">배트맨 열기</a>
@@ -598,13 +591,9 @@ app.get('/betman', (req, res) => {
 // ===============================
 // 회원: 본인 구매내역 개별 삭제
 // ===============================
-app.post('/member/delete/:id', (req, res) => {
+app.post('/member/delete/:id', requireMember, (req, res) => {
   const id = Number(req.params.id);
-  const username = req.body.username;
-
-  if (!username || !USERS[username]) {
-    return res.redirect('/login');
-  }
+  const username = req.memberId;
 
   purchaseList = purchaseList.filter((purchase) => {
     return !(purchase.id === id && purchase.username === username);
@@ -620,10 +609,10 @@ app.post('/member/delete/:id', (req, res) => {
 app.post('/api/send', (req, res) => {
   const { username, type, memo, image } = req.body;
 
-  if (!username) {
+  if (!username || !USERS[username]) {
     return res.status(400).json({
       success: false,
-      message: '회원 정보가 없습니다.'
+      message: '회원 정보가 올바르지 않습니다.'
     });
   }
 
@@ -636,7 +625,7 @@ app.post('/api/send', (req, res) => {
 
   const item = {
     id: Date.now(),
-    username: username || 'unknown',
+    username,
     type: type || 'IMAGE',
     memo: memo || '',
     image: image || '',
@@ -648,14 +637,12 @@ app.post('/api/send', (req, res) => {
 
   purchaseList.unshift(item);
 
-  res.json({
-    success: true,
-    item
-  });
+  res.json({ success: true, item });
 });
 
 // ===============================
 // 관리자 로그인 페이지
+// 주소를 아는 관리자만 접속: /admin-login
 // ===============================
 app.get('/admin-login', (req, res) => {
   res.send(layout('SM1357 관리자 로그인', `
@@ -672,10 +659,6 @@ app.get('/admin-login', (req, res) => {
 
         <button type="submit" style="width:100%;">관리자 로그인</button>
       </form>
-
-      <div style="margin-top:16px;">
-        <a class="btn btn-blue" href="/login">회원 로그인으로 이동</a>
-      </div>
     </div>
   `));
 });
@@ -696,7 +679,7 @@ app.post('/admin-login', (req, res) => {
     `));
   }
 
-  res.setHeader('Set-Cookie', 'sm1357_admin=yes; Path=/; Max-Age=86400; HttpOnly; SameSite=Lax');
+  setCookie(res, 'sm1357_admin', 'yes', 86400);
   res.redirect('/admin');
 });
 
@@ -704,7 +687,7 @@ app.post('/admin-login', (req, res) => {
 // 관리자 로그아웃
 // ===============================
 app.get('/admin-logout', (req, res) => {
-  res.setHeader('Set-Cookie', 'sm1357_admin=; Path=/; Max-Age=0; HttpOnly; SameSite=Lax');
+  clearCookie(res, 'sm1357_admin');
   res.redirect('/admin-login');
 });
 
@@ -837,10 +820,7 @@ app.post('/admin/status/:id', requireAdmin, (req, res) => {
   }
 
   const item = purchaseList.find((purchase) => purchase.id === id);
-
-  if (item) {
-    item.status = status;
-  }
+  if (item) item.status = status;
 
   res.redirect('/admin');
 });
@@ -866,16 +846,11 @@ app.get('/admin/clear', requireAdmin, (req, res) => {
 // 관리자 JSON 확인용
 // ===============================
 app.get('/api/list', requireAdmin, (req, res) => {
-  res.json({
-    success: true,
-    count: purchaseList.length,
-    list: purchaseList
-  });
+  res.json({ success: true, count: purchaseList.length, list: purchaseList });
 });
 
 // ===============================
 // 회원 프로그램 다운로드
-// 이미 작동 확인된 기능이므로 그대로 유지
 // ===============================
 app.get('/download/mobile', (req, res) => {
   res.download(path.join(__dirname, 'public', 'sm1357-mobile.apk'));
@@ -887,17 +862,14 @@ app.get('/download/windows', (req, res) => {
 
 // ===============================
 // 없는 주소 처리
+// 회원에게는 관리자 경로를 노출하지 않음
 // ===============================
 app.use((req, res) => {
   res.status(404).send(layout('Not Found', `
     <div class="card">
       <h1>페이지를 찾을 수 없습니다.</h1>
       <p class="muted">요청 주소: ${escapeHtml(req.originalUrl)}</p>
-      <div class="row">
-        <a class="btn btn-blue" href="/">첫 화면</a>
-        <a class="btn" href="/login">회원 로그인</a>
-        <a class="btn btn-gray" href="/admin-login">관리자 로그인</a>
-      </div>
+      <a class="btn btn-blue" href="/login">회원 로그인</a>
     </div>
   `));
 });
