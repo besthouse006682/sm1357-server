@@ -1,6 +1,7 @@
 const express = require('express');
-const app = express();
 const path = require('path');
+
+const app = express();
 
 app.use(express.urlencoded({ extended: true, limit: '50mb' }));
 app.use(express.json({ limit: '50mb' }));
@@ -14,7 +15,7 @@ function parseCookies(req) {
 
   if (!cookieHeader) return list;
 
-  cookieHeader.split(';').forEach(cookie => {
+  cookieHeader.split(';').forEach((cookie) => {
     const parts = cookie.split('=');
     const key = parts.shift().trim();
     const value = decodeURIComponent(parts.join('='));
@@ -71,13 +72,28 @@ const ADMIN_PASSWORD = 'admin1357';
 
 // ===============================
 // 임시 구매내역 저장소
-// Render 서버 재시작 시 초기화됨
+// 주의: Render 서버 재시작/재배포 시 초기화됨
 // ===============================
 let purchaseList = [];
 
 // ===============================
-// 공통 HTML 레이아웃
+// 공통 함수
 // ===============================
+function escapeHtml(value) {
+  return String(value || '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#039;');
+}
+
+function getStatusClass(status) {
+  if (status === '적중') return 'status-win';
+  if (status === '미적중') return 'status-lose';
+  return 'status-progress';
+}
+
 function layout(title, body) {
   return `
 <!DOCTYPE html>
@@ -87,6 +103,8 @@ function layout(title, body) {
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>${title}</title>
   <style>
+    * { box-sizing: border-box; }
+
     body {
       margin: 0;
       font-family: Arial, sans-serif;
@@ -109,16 +127,14 @@ function layout(title, body) {
       margin-bottom: 20px;
     }
 
-    h1, h2, h3 {
-      margin-top: 0;
-    }
+    h1, h2, h3 { margin-top: 0; }
 
-    input, button, textarea {
+    input, button, textarea, select {
       font-size: 16px;
       box-sizing: border-box;
     }
 
-    input, textarea {
+    input, textarea, select {
       width: 100%;
       padding: 12px;
       margin: 8px 0 14px;
@@ -126,12 +142,6 @@ function layout(title, body) {
       border: 1px solid #4b5563;
       background: #111827;
       color: #fff;
-    }
-
-    input[type="file"] {
-      background: #0f172a;
-      border: 1px dashed #64748b;
-      cursor: pointer;
     }
 
     button, .btn {
@@ -146,56 +156,17 @@ function layout(title, body) {
       font-weight: bold;
     }
 
-    button:hover, .btn:hover {
-      background: #15803d;
-    }
+    button:hover, .btn:hover { background: #15803d; }
 
-    .btn-red {
-      background: #dc2626;
-    }
-
-    .btn-red:hover {
-      background: #b91c1c;
-    }
-
-    .btn-blue {
-      background: #2563eb;
-    }
-
-    .btn-blue:hover {
-      background: #1d4ed8;
-    }
-
-    .btn-gray {
-      background: #4b5563;
-    }
-
-    .btn-gray:hover {
-      background: #374151;
-    }
-
-    .top {
-      display: flex;
-      justify-content: space-between;
-      gap: 12px;
-      align-items: center;
-      margin-bottom: 20px;
-    }
-
-    .muted {
-      color: #9ca3af;
-      font-size: 14px;
-    }
-
-    .ok {
-      color: #22c55e;
-      font-weight: bold;
-    }
-
-    .bad {
-      color: #ef4444;
-      font-weight: bold;
-    }
+    .btn-red { background: #dc2626; }
+    .btn-red:hover { background: #b91c1c; }
+    .btn-blue { background: #2563eb; }
+    .btn-blue:hover { background: #1d4ed8; }
+    .btn-gray { background: #4b5563; }
+    .btn-gray:hover { background: #374151; }
+    .btn-yellow { background: #d97706; }
+    .btn-yellow:hover { background: #b45309; }
+    .btn-small { padding: 9px 12px; font-size: 13px; }
 
     .row {
       display: flex;
@@ -204,25 +175,148 @@ function layout(title, body) {
       align-items: center;
     }
 
-    .notice {
-      padding: 12px;
-      background: #0f172a;
-      border: 1px solid #334155;
-      border-radius: 10px;
+    .muted {
+      color: #9ca3af;
+      font-size: 14px;
+    }
+
+    .ok { color: #22c55e; font-weight: bold; }
+    .bad { color: #ef4444; font-weight: bold; }
+
+    /* 회원 상단: 모바일에서도 로그아웃 우측 유지 */
+    .member-header {
+      display: flex;
+      justify-content: space-between;
+      gap: 12px;
+      align-items: flex-start;
+      margin-bottom: 22px;
+    }
+
+    .member-header h1 {
+      margin-bottom: 10px;
+    }
+
+    /* 다운로드 */
+    .download-card {
+      border: 1px solid #31445f;
+      background: #1f2a3a;
+    }
+
+    .download-card h2 {
       margin-bottom: 14px;
+      font-size: 26px;
+      color: #ffffff;
+    }
+
+    .download-desc {
+      color: #b8c7dc;
+      line-height: 1.7;
+      margin-bottom: 18px;
+    }
+
+    .download-buttons {
+      display: flex;
+      gap: 12px;
+      flex-wrap: wrap;
+      margin-bottom: 16px;
+    }
+
+    .download-btn {
+      display: inline-block;
+      padding: 14px 20px;
+      border-radius: 8px;
+      color: #ffffff;
+      font-weight: 800;
+      text-decoration: none;
+    }
+
+    .mobile-btn { background: #16a34a; }
+    .mobile-btn:hover { background: #15803d; }
+    .windows-btn { background: #2563eb; }
+    .windows-btn:hover { background: #1d4ed8; }
+
+    .download-guide {
+      margin-top: 12px;
+      padding: 12px 14px;
+      border-radius: 8px;
+      background: #111827;
+      border: 1px solid #334155;
       color: #cbd5e1;
       font-size: 14px;
       line-height: 1.6;
     }
 
-    .preview-img {
-      display: none;
-      max-width: 100%;
-      max-height: 420px;
-      margin-top: 12px;
-      border-radius: 10px;
+    .download-guide p { margin: 4px 0; }
+
+    /* 회원 구매내역 */
+    .history-list {
+      display: flex;
+      flex-direction: column;
+      gap: 14px;
+      margin-top: 18px;
+    }
+
+    .history-item {
+      display: flex;
+      gap: 14px;
+      align-items: center;
+      padding: 12px;
+      background: #111827;
+      border: 1px solid #374151;
+      border-radius: 12px;
+    }
+
+    .member-img {
+      width: 145px;
+      height: 105px;
+      object-fit: cover;
+      border-radius: 8px;
       border: 1px solid #374151;
       background: #000;
+      cursor: pointer;
+    }
+
+    .history-info {
+      display: flex;
+      flex-direction: column;
+      align-items: flex-start;
+      gap: 9px;
+      min-width: 0;
+    }
+
+    .status {
+      display: inline-block;
+      padding: 6px 12px;
+      border-radius: 999px;
+      font-size: 13px;
+      font-weight: bold;
+    }
+
+    .status-progress {
+      background: #78350f;
+      color: #fde68a;
+      border: 1px solid #d97706;
+    }
+
+    .status-win {
+      background: #14532d;
+      color: #86efac;
+      border: 1px solid #16a34a;
+    }
+
+    .status-lose {
+      background: #7f1d1d;
+      color: #fca5a5;
+      border: 1px solid #dc2626;
+    }
+
+    /* 관리자 */
+    .admin-top {
+      display: flex;
+      justify-content: space-between;
+      gap: 12px;
+      align-items: center;
+      margin-bottom: 20px;
     }
 
     .admin-img {
@@ -233,6 +327,15 @@ function layout(title, body) {
       cursor: pointer;
       background: #000;
     }
+
+    .admin-actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+      margin-top: 10px;
+    }
+
+    .admin-actions form { margin: 0; }
 
     table {
       width: 100%;
@@ -255,16 +358,7 @@ function layout(title, body) {
       color: #d1d5db;
     }
 
-    .status {
-      display: inline-block;
-      padding: 5px 9px;
-      border-radius: 999px;
-      background: #7c2d12;
-      color: #fed7aa;
-      font-size: 13px;
-      font-weight: bold;
-    }
-
+    /* 이미지 확대 */
     .modal {
       display: none;
       position: fixed;
@@ -284,71 +378,6 @@ function layout(title, body) {
       background: #000;
     }
 
-    .download-card {
-  margin-bottom: 22px;
-  border: 1px solid #31445f;
-  background: #1f2a3a;
-}
-
-.download-card h2 {
-  margin-bottom: 14px;
-  font-size: 26px;
-  color: #ffffff;
-}
-
-.download-desc {
-  color: #b8c7dc;
-  line-height: 1.7;
-  margin-bottom: 18px;
-}
-
-.download-buttons {
-  display: flex;
-  gap: 12px;
-  flex-wrap: wrap;
-  margin-bottom: 16px;
-}
-
-.download-btn {
-  display: inline-block;
-  padding: 14px 20px;
-  border-radius: 8px;
-  color: #ffffff;
-  font-weight: 800;
-  text-decoration: none;
-}
-
-.mobile-btn {
-  background: #16a34a;
-}
-
-.mobile-btn:hover {
-  background: #15803d;
-}
-
-.windows-btn {
-  background: #2563eb;
-}
-
-.windows-btn:hover {
-  background: #1d4ed8;
-}
-
-.download-guide {
-  margin-top: 12px;
-  padding: 12px 14px;
-  border-radius: 8px;
-  background: #111827;
-  border: 1px solid #334155;
-  color: #cbd5e1;
-  font-size: 14px;
-  line-height: 1.6;
-}
-
-.download-guide p {
-  margin: 4px 0;
-}
-
     .modal-close {
       position: fixed;
       top: 18px;
@@ -363,26 +392,35 @@ function layout(title, body) {
     }
 
     @media (max-width: 700px) {
-      .top {
+      .wrap { padding: 18px 12px; }
+      .card { padding: 17px; border-radius: 12px; }
+      .member-header h1 { font-size: 25px; }
+      .member-header .btn { padding: 10px 12px; font-size: 14px; }
+      .download-card h2 { font-size: 23px; }
+      .download-buttons { flex-direction: column; }
+      .download-btn { width: 100%; text-align: center; }
+
+      .history-item {
+        align-items: flex-start;
+      }
+
+      .member-img {
+        width: 128px;
+        height: 105px;
+        flex-shrink: 0;
+      }
+
+      .admin-top {
         display: block;
       }
 
-      table, thead, tbody, th, td, tr {
-        display: block;
-      }
+      .admin-top .row { margin-top: 15px; }
 
-      th {
-        display: none;
-      }
-
-      td {
-        border-bottom: 1px solid #374151;
-      }
-
-      .admin-img {
-        max-width: 100%;
-        max-height: none;
-      }
+      table, thead, tbody, th, td, tr { display: block; }
+      th { display: none; }
+      td { border-bottom: 1px solid #374151; }
+      tr { margin-bottom: 18px; border: 1px solid #374151; border-radius: 10px; overflow: hidden; }
+      .admin-img { max-width: 100%; max-height: none; }
     }
   </style>
 </head>
@@ -393,18 +431,6 @@ function layout(title, body) {
 </body>
 </html>
   `;
-}
-
-// ===============================
-// HTML 이스케이프
-// ===============================
-function escapeHtml(value) {
-  return String(value || '')
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&#039;');
 }
 
 // ===============================
@@ -431,7 +457,7 @@ app.get('/login', (req, res) => {
   res.send(layout('SM1357 로그인', `
     <div class="card" style="max-width:420px;margin:60px auto;">
       <h1>SM1357 로그인</h1>
-      <p class="muted">회원 계정: vip001 ~ vip020 / 비밀번호 1234</p>
+      <p class="muted">회원 계정으로 로그인하세요.</p>
 
       <form method="POST" action="/login">
         <label>아이디</label>
@@ -456,17 +482,7 @@ app.get('/login', (req, res) => {
 app.post('/login', (req, res) => {
   const { username, password } = req.body;
 
-  if (!username || !password) {
-    return res.send(layout('로그인 실패', `
-      <div class="card">
-        <h1 class="bad">로그인 실패</h1>
-        <p>아이디와 비밀번호를 입력하세요.</p>
-        <a class="btn btn-blue" href="/login">다시 로그인</a>
-      </div>
-    `));
-  }
-
-  if (USERS[username] !== password) {
+  if (!username || !password || USERS[username] !== password) {
     return res.send(layout('로그인 실패', `
       <div class="card">
         <h1 class="bad">로그인 실패</h1>
@@ -484,161 +500,89 @@ app.post('/login', (req, res) => {
 // ===============================
 app.get('/betman', (req, res) => {
   const username = req.query.user || 'unknown';
+  const myList = purchaseList.filter((item) => item.username === username);
 
-  res.send(layout('BETMAN 이동', `
-    <div class="top">
+  const myRows = myList.map((item) => {
+    return `
+      <div class="history-item">
+        ${item.image
+          ? `<img class="member-img" src="${item.image}" onclick="openMemberImage('${item.id}')" alt="구매내역 이미지" />`
+          : '<div class="member-img" style="display:flex;align-items:center;justify-content:center;color:#9ca3af;">이미지 없음</div>'
+        }
+        <div class="history-info">
+          <span class="status ${getStatusClass(item.status)}">${escapeHtml(item.status)}</span>
+          <span class="muted">${escapeHtml(item.createdAt)}</span>
+          ${item.memo ? `<span class="muted">${escapeHtml(item.memo)}</span>` : ''}
+        </div>
+      </div>
+    `;
+  }).join('');
+
+  const memberImageMap = {};
+  myList.forEach((item) => {
+    if (item.image) memberImageMap[item.id] = item.image;
+  });
+
+  res.send(layout('SM1357 회원 페이지', `
+    <div class="member-header">
       <div>
         <h1>회원 페이지</h1>
         <p class="muted">로그인 회원: <b>${escapeHtml(username)}</b></p>
-        <div class="card download-card">
-  <h2>SM1357 프로그램 다운로드</h2>
-
-  <p class="download-desc">
-    모바일 사용자는 <b>모바일용 앱</b>을 설치하세요.<br>
-    PC 사용자는 <b>윈도우용 확장프로그램</b>을 설치하세요.
-  </p>
-
-  <div class="download-buttons">
-    <a class="download-btn mobile-btn" href="/download/mobile">
-      모바일용 다운로드
-    </a>
-
-    <a class="download-btn windows-btn" href="/download/windows">
-      윈도우용 다운로드
-    </a>
-  </div>
-
-  <div class="download-guide">
-    <p>모바일: APK 설치 후 앱 안에서 배트맨에 접속합니다.</p>
-    <p>윈도우: ZIP 압축을 풀고 크롬 확장프로그램에서 등록합니다.</p>
-  </div>
-</div>
       </div>
-      <div class="row">
-        <a class="btn btn-red" href="/login">로그아웃</a>
+      <a class="btn btn-red" href="/login">로그아웃</a>
+    </div>
+
+    <div class="card download-card">
+      <h2>SM1357 프로그램 다운로드</h2>
+      <p class="download-desc">
+        모바일 사용자는 <b>모바일용 앱</b>을 설치하세요.<br>
+        PC 사용자는 <b>윈도우용 확장프로그램</b>을 설치하세요.
+      </p>
+      <div class="download-buttons">
+        <a class="download-btn mobile-btn" href="/download/mobile">모바일용 다운로드</a>
+        <a class="download-btn windows-btn" href="/download/windows">윈도우용 다운로드</a>
+      </div>
+      <div class="download-guide">
+        <p>모바일: APK 설치 후 앱 안에서 배트맨에 접속합니다.</p>
+        <p>윈도우: ZIP 압축을 풀고 크롬 확장프로그램에서 등록합니다.</p>
       </div>
     </div>
 
     <div class="card">
       <h2>배트맨 열기</h2>
       <p class="muted">
-        아래 버튼을 누르면 배트맨 사이트가 새 창으로 열립니다.
-        확장프로그램이 설치되어 있으면 배트맨 화면 오른쪽 아래에 구매내역 보내기 버튼이 표시됩니다.
+        아래 버튼을 누르면 배트맨 사이트가 새 창으로 열립니다.<br>
+        설치된 프로그램에서 구매내역을 보내면 아래 내역에 표시됩니다.
       </p>
-
-      <div class="row">
-        <a class="btn btn-blue" href="https://www.betman.co.kr" target="_blank">배트맨 열기</a>
-      </div>
+      <a class="btn btn-blue" href="https://www.betman.co.kr" target="_blank">배트맨 열기</a>
     </div>
 
     <div class="card">
-      <h2>수동 구매내역 보내기</h2>
+      <h2>내 구매내역</h2>
+      <p class="muted">보낸 구매내역의 처리 상태를 확인할 수 있습니다.</p>
+      ${myList.length === 0
+        ? '<div class="download-guide">아직 보낸 구매내역이 없습니다.</div>'
+        : `<div class="history-list">${myRows}</div>`
+      }
+    </div>
 
-      <div class="notice">
-        확장프로그램이 안 될 때만 사용하는 예비 기능입니다.<br>
-        배트맨 화면을 캡처한 이미지를 직접 선택해서 관리자에게 보낼 수 있습니다.
-      </div>
-
-      <label>메모</label>
-      <textarea id="memo" rows="5">구매내역 이미지 첨부합니다.</textarea>
-
-      <label>구매내역 이미지 선택</label>
-      <input id="imageFile" type="file" accept="image/*" />
-
-      <img id="preview" class="preview-img" />
-
-      <div class="row" style="margin-top:16px;">
-        <button onclick="sendPurchase()">구매내역 보내기</button>
-        <button class="btn-gray" onclick="clearImage()">이미지 지우기</button>
-      </div>
-
-      <p id="result" class="muted"></p>
+    <div id="memberModal" class="modal" onclick="closeMemberImage()">
+      <button class="modal-close" onclick="closeMemberImage()">닫기</button>
+      <img id="memberModalImg" src="" alt="구매내역 확대 이미지" />
     </div>
 
     <script>
-      const username = ${JSON.stringify(username)};
-      let selectedImage = '';
+      const memberImageMap = ${JSON.stringify(memberImageMap)};
 
-      const imageFile = document.getElementById('imageFile');
-      const preview = document.getElementById('preview');
-      const result = document.getElementById('result');
-
-      imageFile.addEventListener('change', function () {
-        const file = this.files[0];
-
-        if (!file) {
-          selectedImage = '';
-          preview.style.display = 'none';
-          return;
-        }
-
-        if (!file.type.startsWith('image/')) {
-          alert('이미지 파일만 선택 가능합니다.');
-          this.value = '';
-          selectedImage = '';
-          preview.style.display = 'none';
-          return;
-        }
-
-        if (file.size > 8 * 1024 * 1024) {
-          alert('이미지가 너무 큽니다. 8MB 이하 이미지를 선택하세요.');
-          this.value = '';
-          selectedImage = '';
-          preview.style.display = 'none';
-          return;
-        }
-
-        const reader = new FileReader();
-
-        reader.onload = function (e) {
-          selectedImage = e.target.result;
-          preview.src = selectedImage;
-          preview.style.display = 'block';
-          result.innerText = '이미지 선택 완료';
-        };
-
-        reader.readAsDataURL(file);
-      });
-
-      function clearImage() {
-        imageFile.value = '';
-        selectedImage = '';
-        preview.src = '';
-        preview.style.display = 'none';
-        result.innerText = '이미지를 지웠습니다.';
+      function openMemberImage(id) {
+        if (!memberImageMap[id]) return;
+        document.getElementById('memberModalImg').src = memberImageMap[id];
+        document.getElementById('memberModal').style.display = 'flex';
       }
 
-      function sendPurchase() {
-        const memo = document.getElementById('memo').value.trim();
-
-        if (!memo && !selectedImage) {
-          alert('메모 또는 이미지를 입력하세요.');
-          return;
-        }
-
-        result.innerText = '전송 중입니다...';
-
-        fetch('/api/send', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            username,
-            type: selectedImage ? 'IMAGE' : 'MEMO',
-            memo,
-            image: selectedImage
-          })
-        })
-        .then(res => res.json())
-        .then(data => {
-          if (data.success) {
-            result.innerText = '전송 완료. 관리자 페이지에서 확인하세요.';
-          } else {
-            result.innerText = '전송 실패: ' + (data.message || '알 수 없는 오류');
-          }
-        })
-        .catch(() => {
-          result.innerText = '전송 오류가 발생했습니다.';
-        });
+      function closeMemberImage() {
+        document.getElementById('memberModal').style.display = 'none';
+        document.getElementById('memberModalImg').src = '';
       }
     </script>
   `));
@@ -646,6 +590,7 @@ app.get('/betman', (req, res) => {
 
 // ===============================
 // 구매내역 전송 API
+// 모바일 앱/PC 확장프로그램이 계속 사용하는 기능이므로 삭제 금지
 // ===============================
 app.post('/api/send', (req, res) => {
   const { username, type, memo, image } = req.body;
@@ -667,10 +612,10 @@ app.post('/api/send', (req, res) => {
   const item = {
     id: Date.now(),
     username: username || 'unknown',
-    type: type || 'UNKNOWN',
+    type: type || 'IMAGE',
     memo: memo || '',
     image: image || '',
-    status: '확인전',
+    status: '진행중',
     createdAt: new Date().toLocaleString('ko-KR', {
       timeZone: 'Asia/Seoul'
     })
@@ -743,7 +688,8 @@ app.get('/admin-logout', (req, res) => {
 // ===============================
 app.get('/admin', requireAdmin, (req, res) => {
   const rows = purchaseList.map((item, index) => {
-    const memoHtml = escapeHtml(item.memo).replace(/\\n/g, '<br>');
+    const memoHtml = escapeHtml(item.memo).replace(/\n/g, '<br>');
+    const safeId = encodeURIComponent(String(item.id));
 
     return `
       <tr>
@@ -751,16 +697,39 @@ app.get('/admin', requireAdmin, (req, res) => {
         <td><b>${escapeHtml(item.username)}</b></td>
         <td>${escapeHtml(item.type)}</td>
         <td>${memoHtml || '<span class="muted">메모 없음</span>'}</td>
-        <td><span class="status">${escapeHtml(item.status)}</span></td>
+        <td>
+          <span class="status ${getStatusClass(item.status)}">${escapeHtml(item.status)}</span>
+          <div class="admin-actions">
+            <form method="POST" action="/admin/status/${safeId}">
+              <input type="hidden" name="status" value="진행중" />
+              <button class="btn-small btn-yellow" type="submit">진행중</button>
+            </form>
+            <form method="POST" action="/admin/status/${safeId}">
+              <input type="hidden" name="status" value="적중" />
+              <button class="btn-small" type="submit">적중</button>
+            </form>
+            <form method="POST" action="/admin/status/${safeId}">
+              <input type="hidden" name="status" value="미적중" />
+              <button class="btn-small btn-red" type="submit">미적중</button>
+            </form>
+          </div>
+        </td>
         <td>${escapeHtml(item.createdAt)}</td>
         <td>
-          ${
-            item.image
-              ? `<img class="admin-img" src="${item.image}" onclick="openImage('${item.id}')" />
-                 <div style="margin-top:8px;">
-                   <button onclick="openImage('${item.id}')">크게 보기</button>
-                 </div>`
-              : '<span class="muted">이미지 없음</span>'
+          ${item.image
+            ? `<img class="admin-img" src="${item.image}" onclick="openImage('${item.id}')" alt="구매내역 이미지" />
+               <div class="admin-actions">
+                 <button class="btn-small btn-blue" onclick="openImage('${item.id}')">크게 보기</button>
+                 <form method="POST" action="/admin/delete/${safeId}" onsubmit="return confirm('이 구매내역을 삭제할까요?');">
+                   <button class="btn-small btn-red" type="submit">삭제</button>
+                 </form>
+               </div>`
+            : `<span class="muted">이미지 없음</span>
+               <div class="admin-actions">
+                 <form method="POST" action="/admin/delete/${safeId}" onsubmit="return confirm('이 구매내역을 삭제할까요?');">
+                   <button class="btn-small btn-red" type="submit">삭제</button>
+                 </form>
+               </div>`
           }
         </td>
       </tr>
@@ -768,15 +737,15 @@ app.get('/admin', requireAdmin, (req, res) => {
   }).join('');
 
   const imageMap = {};
-  purchaseList.forEach(item => {
+  purchaseList.forEach((item) => {
     if (item.image) imageMap[item.id] = item.image;
   });
 
   res.send(layout('SM1357 관리자', `
-    <div class="top">
+    <div class="admin-top">
       <div>
         <h1>관리자 페이지</h1>
-        <p class="muted">회원이 보낸 구매내역 이미지와 메모를 확인하는 화면입니다.</p>
+        <p class="muted">회원이 보낸 구매내역 이미지와 처리 상태를 관리합니다.</p>
       </div>
       <div class="row">
         <a class="btn" href="/admin">새로고침</a>
@@ -787,62 +756,81 @@ app.get('/admin', requireAdmin, (req, res) => {
 
     <div class="card">
       <h2>구매내역 목록</h2>
-
-      ${
-        purchaseList.length === 0
-          ? '<p class="muted">아직 전송된 구매내역이 없습니다.</p>'
-          : `
-            <table>
-              <thead>
-                <tr>
-                  <th>번호</th>
-                  <th>회원ID</th>
-                  <th>구분</th>
-                  <th>내용</th>
-                  <th>상태</th>
-                  <th>시간</th>
-                  <th>이미지</th>
-                </tr>
-              </thead>
-              <tbody>
-                ${rows}
-              </tbody>
-            </table>
-          `
+      ${purchaseList.length === 0
+        ? '<p class="muted">아직 전송된 구매내역이 없습니다.</p>'
+        : `
+          <table>
+            <thead>
+              <tr>
+                <th>번호</th>
+                <th>회원ID</th>
+                <th>구분</th>
+                <th>내용</th>
+                <th>상태 변경</th>
+                <th>시간</th>
+                <th>이미지</th>
+              </tr>
+            </thead>
+            <tbody>${rows}</tbody>
+          </table>
+        `
       }
     </div>
 
     <div id="modal" class="modal" onclick="closeImage()">
       <button class="modal-close" onclick="closeImage()">닫기</button>
-      <img id="modalImg" src="" />
+      <img id="modalImg" src="" alt="구매내역 확대 이미지" />
     </div>
 
     <script>
       const imageMap = ${JSON.stringify(imageMap)};
 
       function openImage(id) {
-        const modal = document.getElementById('modal');
-        const modalImg = document.getElementById('modalImg');
-
         if (!imageMap[id]) return;
-
-        modalImg.src = imageMap[id];
-        modal.style.display = 'flex';
+        document.getElementById('modalImg').src = imageMap[id];
+        document.getElementById('modal').style.display = 'flex';
       }
 
       function closeImage() {
-        const modal = document.getElementById('modal');
-        const modalImg = document.getElementById('modalImg');
-
-        modal.style.display = 'none';
-        modalImg.src = '';
+        document.getElementById('modal').style.display = 'none';
+        document.getElementById('modalImg').src = '';
       }
     </script>
   `));
 });
 
 // ===============================
-// 관리자 데이터 전체 삭제
+// 관리자: 구매내역 상태 변경
+// ===============================
+app.post('/admin/status/:id', requireAdmin, (req, res) => {
+  const id = Number(req.params.id);
+  const status = req.body.status;
+  const allowedStatus = ['진행중', '적중', '미적중'];
+
+  if (!allowedStatus.includes(status)) {
+    return res.status(400).send('허용되지 않은 상태입니다.');
+  }
+
+  const item = purchaseList.find((purchase) => purchase.id === id);
+
+  if (item) {
+    item.status = status;
+  }
+
+  res.redirect('/admin');
+});
+
+// ===============================
+// 관리자: 구매내역 개별 삭제
+// ===============================
+app.post('/admin/delete/:id', requireAdmin, (req, res) => {
+  const id = Number(req.params.id);
+  purchaseList = purchaseList.filter((purchase) => purchase.id !== id);
+  res.redirect('/admin');
+});
+
+// ===============================
+// 관리자: 구매내역 전체 삭제
 // ===============================
 app.get('/admin/clear', requireAdmin, (req, res) => {
   purchaseList = [];
@@ -860,6 +848,10 @@ app.get('/api/list', requireAdmin, (req, res) => {
   });
 });
 
+// ===============================
+// 회원 프로그램 다운로드
+// 이미 작동 확인된 기능이므로 그대로 유지
+// ===============================
 app.get('/download/mobile', (req, res) => {
   res.download(path.join(__dirname, 'public', 'sm1357-mobile.apk'));
 });
