@@ -251,6 +251,112 @@ function testSupabaseConnection() {
   });
 }
 
+// ===============================
+// Supabase 회원관리 함수
+// 관리자 페이지에서만 호출되며 Secret Key는 Render 서버 안에서만 사용됩니다.
+// ===============================
+function supabaseRequest(method, endpoint, data) {
+  return new Promise((resolve) => {
+    if (!SUPABASE_URL || !SUPABASE_SECRET_KEY) {
+      resolve({ success: false, message: 'Render의 Supabase 환경변수가 없습니다.' });
+      return;
+    }
+
+    let apiUrl;
+    try {
+      apiUrl = new URL(endpoint, SUPABASE_URL);
+    } catch (error) {
+      resolve({ success: false, message: 'SUPABASE_URL 형식이 올바르지 않습니다.' });
+      return;
+    }
+
+    const payload = data ? JSON.stringify(data) : '';
+    const headers = {
+      apikey: SUPABASE_SECRET_KEY,
+      Accept: 'application/json'
+    };
+
+    if (payload) {
+      headers['Content-Type'] = 'application/json';
+      headers['Content-Length'] = Buffer.byteLength(payload);
+    }
+
+    const request = https.request(
+      {
+        hostname: apiUrl.hostname,
+        path: apiUrl.pathname + apiUrl.search,
+        method,
+        headers
+      },
+      (response) => {
+        let body = '';
+
+        response.on('data', (chunk) => {
+          body += chunk;
+        });
+
+        response.on('end', () => {
+          let parsed = null;
+          try {
+            parsed = body ? JSON.parse(body) : null;
+          } catch (error) {
+            parsed = body;
+          }
+
+          if (response.statusCode >= 200 && response.statusCode < 300) {
+            resolve({ success: true, data: parsed });
+            return;
+          }
+
+          const message = parsed && parsed.message
+            ? parsed.message
+            : `Supabase 오류 코드: ${response.statusCode}`;
+
+          console.error('[SUPABASE] 회원관리 요청 실패:', response.statusCode, body);
+          resolve({ success: false, message });
+        });
+      }
+    );
+
+    request.on('error', (error) => {
+      console.error('[SUPABASE] 회원관리 요청 오류:', error.message);
+      resolve({ success: false, message: error.message });
+    });
+
+    if (payload) request.write(payload);
+    request.end();
+  });
+}
+
+async function getMemberListFromSupabase() {
+  return supabaseRequest(
+    'GET',
+    '/rest/v1/members?select=username,memo,is_active,created_at&order=username.asc',
+    null
+  );
+}
+
+async function callMemberAdminFunction(functionName, values) {
+  return supabaseRequest(
+    'POST',
+    `/rest/v1/rpc/${functionName}`,
+    values
+  );
+}
+
+function memberResultPage(title, message, success) {
+  return layout(title, `
+    <div class="card">
+      <h1 class="${success ? 'ok' : 'bad'}">${escapeHtml(title)}</h1>
+      <p>${escapeHtml(message)}</p>
+      <div class="row">
+        <a class="btn btn-blue" href="/admin/members">회원관리로 돌아가기</a>
+        <a class="btn btn-gray" href="/admin">관리자 페이지로 돌아가기</a>
+      </div>
+    </div>
+  `);
+}
+
 function layout(title, body) {
   return `
 <!DOCTYPE html>
@@ -971,6 +1077,205 @@ app.get('/admin', requireAdmin, (req, res) => {
 // ===============================
 // 관리자: Supabase DB 연결 테스트
 // 회원 로그인/구매내역 저장 방식은 아직 변경하지 않습니다.
+// ===============================
+// 관리자: 회원관리 페이지
+// 현재 단계에서는 Supabase 회원 목록과 관리기능만 제공합니다.
+// 실제 회원 로그인은 다음 단계에서 연결합니다.
+// ===============================
+app.get('/admin/members', requireAdmin, async (req, res) => {
+  const result = await getMemberListFromSupabase();
+
+  if (!result.success) {
+    return res.status(500).send(memberResultPage(
+      '회원 목록 조회 실패',
+      result.message,
+      false
+    ));
+  }
+
+  const members = Array.isArray(result.data) ? result.data : [];
+
+  const rows = members.map((member) => {
+    const username = escapeHtml(member.username);
+    const memo = escapeHtml(member.memo || '');
+    const isActive = member.is_active === true;
+
+    return `
+      <tr>
+        <td><b>${username}</b></td>
+        <td>${memo || '<span class="muted">메모 없음</span>'}</td>
+        <td>
+          <span class="status ${isActive ? 'status-win' : 'status-lose'}">
+            ${isActive ? '사용중' : '정지'}
+          </span>
+        </td>
+        <td>
+          <form method="POST" action="/admin/members/password" style="margin-bottom:10px;">
+            <input type="hidden" name="username" value="${username}" />
+            <input name="password" type="password" placeholder="새 비밀번호" minlength="4" required style="margin:0 0 7px;" />
+            <button class="btn-small btn-blue" type="submit">비밀번호 변경</button>
+          </form>
+
+          <div class="admin-actions">
+            <form method="POST" action="/admin/members/active">
+              <input type="hidden" name="username" value="${username}" />
+              <input type="hidden" name="is_active" value="${isActive ? 'false' : 'true'}" />
+              <button class="btn-small ${isActive ? 'btn-yellow' : ''}" type="submit">
+                ${isActive ? '정지' : '사용재개'}
+              </button>
+            </form>
+
+            <form method="POST" action="/admin/members/delete" onsubmit="return confirm('${username} 회원을 삭제할까요? 구매내역이 있는 회원은 삭제되지 않습니다.');">
+              <input type="hidden" name="username" value="${username}" />
+              <button class="btn-small btn-red" type="submit">삭제</button>
+            </form>
+          </div>
+        </td>
+      </tr>
+    `;
+  }).join('');
+
+  res.send(layout('SM1357 회원관리', `
+    <div class="admin-top">
+      <div>
+        <h1>회원관리</h1>
+        <p class="muted">회원 계정은 Supabase에 영구 저장됩니다.</p>
+      </div>
+      <div class="row">
+        <a class="btn btn-blue" href="/admin/members">새로고침</a>
+        <a class="btn btn-gray" href="/admin">구매내역 관리로 돌아가기</a>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>새 회원 추가</h2>
+      <p class="muted">아이디는 영문 소문자, 숫자, _, - 만 사용하여 3~20자로 입력하세요.</p>
+      <form method="POST" action="/admin/members/create">
+        <div class="row">
+          <div style="flex:1;min-width:180px;">
+            <label>아이디</label>
+            <input name="username" placeholder="예: vip021" required />
+          </div>
+          <div style="flex:1;min-width:180px;">
+            <label>비밀번호</label>
+            <input name="password" type="password" placeholder="4자 이상" minlength="4" required />
+          </div>
+          <div style="flex:1;min-width:180px;">
+            <label>메모</label>
+            <input name="memo" placeholder="예: 신규회원" />
+          </div>
+        </div>
+        <button type="submit">회원 생성</button>
+      </form>
+    </div>
+
+    <div class="card">
+      <h2>회원 목록 (${members.length}명)</h2>
+      ${members.length === 0
+        ? '<p class="muted">등록된 회원이 없습니다.</p>'
+        : `
+          <table>
+            <thead>
+              <tr>
+                <th>아이디</th>
+                <th>메모</th>
+                <th>상태</th>
+                <th>관리</th>
+              </tr>
+            </thead>
+            <tbody>${rows}</tbody>
+          </table>
+        `
+      }
+    </div>
+  `));
+});
+
+// ===============================
+// 관리자: 새 회원 생성
+// ===============================
+app.post('/admin/members/create', requireAdmin, async (req, res) => {
+  const username = String(req.body.username || '').trim().toLowerCase();
+  const password = String(req.body.password || '');
+  const memo = String(req.body.memo || '').trim();
+
+  const result = await callMemberAdminFunction('admin_create_member', {
+    p_username: username,
+    p_password: password,
+    p_memo: memo
+  });
+
+  if (!result.success) {
+    return res.status(400).send(memberResultPage('회원 생성 실패', result.message, false));
+  }
+
+  res.send(memberResultPage(
+    '회원 생성 완료',
+    `${username} 회원이 생성되었습니다. 실제 로그인 연결은 다음 단계에서 적용합니다.`,
+    true
+  ));
+});
+
+// ===============================
+// 관리자: 회원 비밀번호 변경
+// ===============================
+app.post('/admin/members/password', requireAdmin, async (req, res) => {
+  const username = String(req.body.username || '').trim();
+  const password = String(req.body.password || '');
+
+  const result = await callMemberAdminFunction('admin_change_member_password', {
+    p_username: username,
+    p_password: password
+  });
+
+  if (!result.success) {
+    return res.status(400).send(memberResultPage('비밀번호 변경 실패', result.message, false));
+  }
+
+  res.send(memberResultPage('비밀번호 변경 완료', `${username} 회원의 비밀번호가 변경되었습니다.`, true));
+});
+
+// ===============================
+// 관리자: 회원 사용중/정지 변경
+// ===============================
+app.post('/admin/members/active', requireAdmin, async (req, res) => {
+  const username = String(req.body.username || '').trim();
+  const isActive = String(req.body.is_active) === 'true';
+
+  const result = await callMemberAdminFunction('admin_set_member_active', {
+    p_username: username,
+    p_is_active: isActive
+  });
+
+  if (!result.success) {
+    return res.status(400).send(memberResultPage('회원 상태 변경 실패', result.message, false));
+  }
+
+  res.send(memberResultPage(
+    '회원 상태 변경 완료',
+    `${username} 회원을 ${isActive ? '사용중' : '정지'} 상태로 변경했습니다.`,
+    true
+  ));
+});
+
+// ===============================
+// 관리자: 회원 삭제
+// 구매내역이 있는 회원은 Supabase 함수에서 삭제 차단
+// ===============================
+app.post('/admin/members/delete', requireAdmin, async (req, res) => {
+  const username = String(req.body.username || '').trim();
+
+  const result = await callMemberAdminFunction('admin_delete_member', {
+    p_username: username
+  });
+
+  if (!result.success) {
+    return res.status(400).send(memberResultPage('회원 삭제 실패', result.message, false));
+  }
+
+  res.send(memberResultPage('회원 삭제 완료', `${username} 회원이 삭제되었습니다.`, true));
+});
+
 // ===============================
 app.post('/admin/supabase-test', requireAdmin, async (req, res) => {
   const result = await testSupabaseConnection();
