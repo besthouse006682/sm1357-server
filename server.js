@@ -365,6 +365,112 @@ function memberResultPage(title, message, success) {
   `);
 }
 
+// ===============================
+// Supabase Storage 연결 테스트
+// purchase-images 비공개 버킷에 작은 테스트 파일을 저장한 뒤 바로 삭제합니다.
+// 실제 구매내역 저장 방식은 아직 변경하지 않습니다.
+// ===============================
+function supabaseStorageHeaders(hasBody) {
+  const headers = {
+    apikey: SUPABASE_SECRET_KEY,
+    Accept: 'application/json'
+  };
+
+  // legacy service_role JWT 키는 Authorization으로 Storage RLS를 우회합니다.
+  // 새 sb_secret_ 키는 apikey 헤더를 통해 서버 권한을 사용합니다.
+  if (!SUPABASE_SECRET_KEY.startsWith('sb_secret_')) {
+    headers.Authorization = `Bearer ${SUPABASE_SECRET_KEY}`;
+  }
+
+  if (hasBody) {
+    headers['Content-Type'] = 'text/plain; charset=utf-8';
+    headers['x-upsert'] = 'true';
+  }
+
+  return headers;
+}
+
+function supabaseStorageObjectRequest(method, objectPath, bodyBuffer) {
+  return new Promise((resolve) => {
+    if (!SUPABASE_URL || !SUPABASE_SECRET_KEY) {
+      resolve({ success: false, message: 'Render의 Supabase 환경변수가 없습니다.' });
+      return;
+    }
+
+    const safePath = objectPath.split('/').map(encodeURIComponent).join('/');
+    let apiUrl;
+
+    try {
+      apiUrl = new URL(`/storage/v1/object/purchase-images/${safePath}`, SUPABASE_URL);
+    } catch (error) {
+      resolve({ success: false, message: 'SUPABASE_URL 형식이 올바르지 않습니다.' });
+      return;
+    }
+
+    const headers = supabaseStorageHeaders(Boolean(bodyBuffer));
+    if (bodyBuffer) headers['Content-Length'] = bodyBuffer.length;
+
+    const request = https.request(
+      {
+        hostname: apiUrl.hostname,
+        path: apiUrl.pathname + apiUrl.search,
+        method,
+        headers
+      },
+      (response) => {
+        let body = '';
+        response.on('data', (chunk) => { body += chunk; });
+        response.on('end', () => {
+          let parsed = null;
+          try { parsed = body ? JSON.parse(body) : null; } catch (e) { parsed = body; }
+
+          if (response.statusCode >= 200 && response.statusCode < 300) {
+            resolve({ success: true, data: parsed });
+          } else {
+            const message = parsed && parsed.message
+              ? parsed.message
+              : `Storage 오류 코드: ${response.statusCode}`;
+            console.error('[SUPABASE STORAGE]', response.statusCode, body);
+            resolve({ success: false, message });
+          }
+        });
+      }
+    );
+
+    request.on('error', (error) => {
+      console.error('[SUPABASE STORAGE] 요청 오류:', error.message);
+      resolve({ success: false, message: error.message });
+    });
+
+    if (bodyBuffer) request.write(bodyBuffer);
+    request.end();
+  });
+}
+
+async function testSupabaseStorageConnection() {
+  const path = `system/storage-test-${Date.now()}.txt`;
+  const upload = await supabaseStorageObjectRequest(
+    'POST',
+    path,
+    Buffer.from('SM1357 Storage test', 'utf8')
+  );
+
+  if (!upload.success) {
+    return { success: false, message: `테스트 파일 업로드 실패: ${upload.message}` };
+  }
+
+  const remove = await supabaseStorageObjectRequest('DELETE', path, null);
+
+  if (!remove.success) {
+    return {
+      success: false,
+      message: `업로드는 성공했지만 테스트 파일 삭제 실패: ${remove.message}`
+    };
+  }
+
+  return { success: true };
+}
+
 function layout(title, body) {
   return `
 <!DOCTYPE html>
@@ -1075,6 +1181,9 @@ app.get('/admin', requireAdmin, (req, res) => {
         <form method="POST" action="/admin/supabase-test" style="margin:0;">
           <button class="btn btn-yellow" type="submit">DB 연결 테스트</button>
         </form>
+        <form method="POST" action="/admin/storage-test" style="margin:0;">
+          <button class="btn btn-yellow" type="submit">저장소 테스트</button>
+        </form>
         <a class="btn btn-red" href="/admin/clear" onclick="return confirm('전체 구매내역을 삭제할까요?')">전체삭제</a>
         <a class="btn btn-gray" href="/admin-logout">관리자 로그아웃</a>
       </div>
@@ -1328,6 +1437,33 @@ app.post('/admin/members/delete', requireAdmin, async (req, res) => {
   }
 
   res.send(memberResultPage('회원 삭제 완료', `${username} 회원이 삭제되었습니다.`, true));
+});
+
+// ===============================
+// 관리자: Supabase Storage 연결 테스트
+// 실제 구매내역 영구 저장은 아직 연결하지 않습니다.
+// ===============================
+app.post('/admin/storage-test', requireAdmin, async (req, res) => {
+  const result = await testSupabaseStorageConnection();
+
+  if (result.success) {
+    return res.send(layout('저장소 연결 성공', `
+      <div class="card">
+        <h1>Storage 연결 성공</h1>
+        <p class="ok">purchase-images 비공개 저장소 연결이 정상입니다.</p>
+        <p class="muted">작은 테스트 파일 업로드와 자동 삭제까지 확인했습니다.</p>
+        <a class="btn btn-blue" href="/admin">관리자 페이지로 돌아가기</a>
+      </div>
+    `));
+  }
+
+  res.status(500).send(layout('저장소 연결 실패', `
+    <div class="card">
+      <h1 class="bad">Storage 연결 실패</h1>
+      <p>${escapeHtml(result.message)}</p>
+      <a class="btn btn-blue" href="/admin">관리자 페이지로 돌아가기</a>
+    </div>
+  `));
 });
 
 // ===============================
