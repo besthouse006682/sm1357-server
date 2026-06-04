@@ -1,10 +1,18 @@
 const express = require('express');
 const path = require('path');
+const https = require('https');
 
 const app = express();
 
 app.use(express.urlencoded({ extended: true, limit: '50mb' }));
 app.use(express.json({ limit: '50mb' }));
+
+// ===============================
+// 텔레그램 알림 설정
+// Render Environment에 저장한 값을 자동으로 읽습니다.
+// ===============================
+const TELEGRAM_BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || '';
+const TELEGRAM_CHAT_ID = process.env.TELEGRAM_CHAT_ID || '';
 
 // ===============================
 // 간단 쿠키 처리
@@ -114,6 +122,59 @@ function getStatusClass(status) {
   if (status === '적중') return 'status-win';
   if (status === '미적중') return 'status-lose';
   return 'status-progress';
+}
+
+// ===============================
+// 텔레그램 알림 발송 함수
+// 1단계에서는 관리자 테스트 버튼에서만 실행합니다.
+// ===============================
+function sendTelegramMessage(text) {
+  return new Promise((resolve) => {
+    if (!TELEGRAM_BOT_TOKEN || !TELEGRAM_CHAT_ID) {
+      console.error('[TELEGRAM] Render 환경변수 누락');
+      resolve(false);
+      return;
+    }
+
+    const payload = JSON.stringify({
+      chat_id: TELEGRAM_CHAT_ID,
+      text,
+      disable_web_page_preview: true
+    });
+
+    const request = https.request(
+      {
+        hostname: 'api.telegram.org',
+        path: `/bot${TELEGRAM_BOT_TOKEN}/sendMessage`,
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Content-Length': Buffer.byteLength(payload)
+        }
+      },
+      (response) => {
+        let result = '';
+        response.on('data', (chunk) => { result += chunk; });
+        response.on('end', () => {
+          if (response.statusCode >= 200 && response.statusCode < 300) {
+            console.log('[TELEGRAM] 테스트 알림 전송 완료');
+            resolve(true);
+          } else {
+            console.error('[TELEGRAM] 전송 실패:', response.statusCode, result);
+            resolve(false);
+          }
+        });
+      }
+    );
+
+    request.on('error', (error) => {
+      console.error('[TELEGRAM] 요청 오류:', error.message);
+      resolve(false);
+    });
+
+    request.write(payload);
+    request.end();
+  });
 }
 
 function layout(title, body) {
@@ -757,6 +818,9 @@ app.get('/admin', requireAdmin, (req, res) => {
       </div>
       <div class="row">
         <a class="btn" href="/admin">새로고침</a>
+        <form method="POST" action="/admin/telegram-test" style="margin:0;">
+          <button class="btn btn-blue" type="submit">알림 테스트</button>
+        </form>
         <a class="btn btn-red" href="/admin/clear" onclick="return confirm('전체 구매내역을 삭제할까요?')">전체삭제</a>
         <a class="btn btn-gray" href="/admin-logout">관리자 로그아웃</a>
       </div>
@@ -804,6 +868,38 @@ app.get('/admin', requireAdmin, (req, res) => {
         document.getElementById('modalImg').src = '';
       }
     </script>
+  `));
+});
+
+// ===============================
+// 관리자: 텔레그램 알림 테스트
+// 회원 전송 자동 알림은 아직 연결하지 않습니다.
+// ===============================
+app.post('/admin/telegram-test', requireAdmin, async (req, res) => {
+  const now = new Date().toLocaleString('ko-KR', {
+    timeZone: 'Asia/Seoul'
+  });
+
+  const success = await sendTelegramMessage(
+    `✅ SM1357 텔레그램 알림 테스트 성공\n\n시간: ${now}\n휴대폰과 PC 알림 연결이 정상입니다.`
+  );
+
+  if (success) {
+    return res.send(layout('알림 테스트 완료', `
+      <div class="card">
+        <h1>알림 전송 완료</h1>
+        <p>텔레그램에서 테스트 메시지를 확인하세요.</p>
+        <a class="btn btn-blue" href="/admin">관리자 페이지로 돌아가기</a>
+      </div>
+    `));
+  }
+
+  res.status(500).send(layout('알림 테스트 실패', `
+    <div class="card">
+      <h1 class="bad">알림 전송 실패</h1>
+      <p>Render 환경변수 또는 텔레그램 봇 설정을 확인해야 합니다.</p>
+      <a class="btn btn-blue" href="/admin">관리자 페이지로 돌아가기</a>
+    </div>
   `));
 });
 
