@@ -60,46 +60,33 @@ function requireAdmin(req, res, next) {
   next();
 }
 
-function getLoggedInMember(req) {
+function getMemberCookie(req) {
   const cookies = parseCookies(req);
-  const username = cookies.sm1357_member || '';
-  return USERS[username] ? username : '';
+  return String(cookies.sm1357_member || '').trim().toLowerCase();
 }
 
-function requireMember(req, res, next) {
-  const username = getLoggedInMember(req);
+async function requireMember(req, res, next) {
+  const username = getMemberCookie(req);
+
   if (!username) {
     return res.redirect('/login');
   }
-  req.memberId = username;
+
+  const result = await checkActiveMemberFromSupabase(username);
+
+  if (!result.success || !result.data || result.data.success !== true) {
+    clearCookie(res, 'sm1357_member');
+    return res.redirect('/login');
+  }
+
+  req.memberId = result.data.username || username;
   next();
 }
 
 // ===============================
-// 회원 계정 목록
+// 회원 계정
 // ===============================
-const USERS = {
-  vip001: '1234',
-  vip002: '1234',
-  vip003: '1234',
-  vip004: '1234',
-  vip005: '1234',
-  vip006: '1234',
-  vip007: '1234',
-  vip008: '1234',
-  vip009: '1234',
-  vip010: '1234',
-  vip011: '1234',
-  vip012: '1234',
-  vip013: '1234',
-  vip014: '1234',
-  vip015: '1234',
-  vip016: '1234',
-  vip017: '1234',
-  vip018: '1234',
-  vip019: '1234',
-  vip020: '1234'
-};
+// 회원 아이디/비밀번호/정지 상태는 Supabase members 테이블에서 관리합니다.
 
 // ===============================
 // 관리자 계정
@@ -341,6 +328,27 @@ async function callMemberAdminFunction(functionName, values) {
     'POST',
     `/rest/v1/rpc/${functionName}`,
     values
+  );
+}
+
+async function verifyMemberLoginFromSupabase(username, password) {
+  return supabaseRequest(
+    'POST',
+    '/rest/v1/rpc/verify_member_login',
+    {
+      p_username: username,
+      p_password: password
+    }
+  );
+}
+
+async function checkActiveMemberFromSupabase(username) {
+  return supabaseRequest(
+    'POST',
+    '/rest/v1/rpc/check_active_member',
+    {
+      p_username: username
+    }
   );
 }
 
@@ -707,21 +715,49 @@ app.get('/login', (req, res) => {
 // ===============================
 // 회원 로그인 처리
 // ===============================
-app.post('/login', (req, res) => {
-  const { username, password } = req.body;
+app.post('/login', async (req, res) => {
+  const username = String(req.body.username || '').trim().toLowerCase();
+  const password = String(req.body.password || '');
 
-  if (!username || !password || USERS[username] !== password) {
+  if (!username || !password) {
     return res.send(layout('로그인 실패', `
       <div class="card">
         <h1 class="bad">로그인 실패</h1>
-        <p>아이디 또는 비밀번호가 틀렸습니다.</p>
+        <p>아이디와 비밀번호를 입력하세요.</p>
         <a class="btn btn-blue" href="/login">다시 로그인</a>
       </div>
     `));
   }
 
-  setCookie(res, 'sm1357_member', username, 86400);
-  res.redirect(`/betman?user=${encodeURIComponent(username)}`);
+  const result = await verifyMemberLoginFromSupabase(username, password);
+
+  if (!result.success) {
+    return res.status(500).send(layout('로그인 확인 오류', `
+      <div class="card">
+        <h1 class="bad">로그인 확인 오류</h1>
+        <p>회원정보 확인 중 오류가 발생했습니다. 잠시 후 다시 시도하세요.</p>
+        <a class="btn btn-blue" href="/login">다시 로그인</a>
+      </div>
+    `));
+  }
+
+  if (!result.data || result.data.success !== true) {
+    const message = result.data && result.data.message
+      ? result.data.message
+      : '아이디 또는 비밀번호가 틀렸습니다.';
+
+    return res.send(layout('로그인 실패', `
+      <div class="card">
+        <h1 class="bad">로그인 실패</h1>
+        <p>${escapeHtml(message)}</p>
+        <a class="btn btn-blue" href="/login">다시 로그인</a>
+      </div>
+    `));
+  }
+
+  const verifiedUsername = result.data.username || username;
+  setCookie(res, 'sm1357_member', verifiedUsername, 86400);
+  res.redirect(`/betman?user=${encodeURIComponent(verifiedUsername)}`);
 });
 
 // ===============================
@@ -847,13 +883,30 @@ app.post('/member/delete/:id', requireMember, (req, res) => {
 // 구매내역 전송 API
 // 모바일 앱/PC 확장프로그램이 계속 사용하는 기능이므로 삭제 금지
 // ===============================
-app.post('/api/send', (req, res) => {
-  const { username, type, memo, image } = req.body;
+app.post('/api/send', async (req, res) => {
+  const username = String(req.body.username || '').trim().toLowerCase();
+  const { type, memo, image } = req.body;
 
-  if (!username || !USERS[username]) {
+  if (!username) {
     return res.status(400).json({
       success: false,
       message: '회원 정보가 올바르지 않습니다.'
+    });
+  }
+
+  const activeResult = await checkActiveMemberFromSupabase(username);
+
+  if (!activeResult.success) {
+    return res.status(500).json({
+      success: false,
+      message: '회원 상태 확인 중 오류가 발생했습니다.'
+    });
+  }
+
+  if (!activeResult.data || activeResult.data.success !== true) {
+    return res.status(403).json({
+      success: false,
+      message: '사용할 수 없는 회원 계정입니다.'
     });
   }
 
