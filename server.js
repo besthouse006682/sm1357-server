@@ -112,9 +112,11 @@ function escapeHtml(value) {
 }
 
 function getStatusClass(status) {
+  if (status === '확인중') return 'status-checking';
+  if (status === '진행중') return 'status-progress';
   if (status === '적중') return 'status-win';
   if (status === '미적중') return 'status-lose';
-  return 'status-progress';
+  return 'status-checking';
 }
 
 // ===============================
@@ -947,10 +949,16 @@ function layout(title, body) {
       font-weight: bold;
     }
 
-    .status-progress {
+    .status-checking {
       background: #78350f;
       color: #fde68a;
-      border: 1px solid #d97706;
+      border: 1px solid #f59e0b;
+    }
+
+    .status-progress {
+      background: #1e3a8a;
+      color: #bfdbfe;
+      border: 1px solid #3b82f6;
     }
 
     .status-win {
