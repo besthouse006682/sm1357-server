@@ -563,19 +563,37 @@ function normalizePurchase(row) {
     memo: row.memo || '',
     imagePath: row.image_path,
     image: `/purchase-image/${encodeURIComponent(String(row.id))}`,
-    status: row.status || '진행중',
+    status: row.status || '확인중',
     createdAt: displayPurchaseDate(row.created_at)
   };
 }
 
-async function getPurchasesFromSupabase(username) {
-  const filter = username
-    ? `&username=eq.${encodeURIComponent(username)}`
+async function getPurchasesFromSupabase(username, filters = {}) {
+  const conditions = [];
+
+  if (username) {
+    conditions.push(`username=eq.${encodeURIComponent(username)}`);
+  }
+
+  if (filters.username) {
+    conditions.push(`username=eq.${encodeURIComponent(filters.username)}`);
+  }
+
+  if (filters.status) {
+    conditions.push(`status=eq.${encodeURIComponent(filters.status)}`);
+  }
+
+  if (filters.fromDate) {
+    conditions.push(`created_at=gte.${encodeURIComponent(filters.fromDate)}`);
+  }
+
+  const queryFilters = conditions.length > 0
+    ? '&' + conditions.join('&')
     : '';
 
   const result = await supabasePurchaseRequest(
     'GET',
-    `/rest/v1/purchases?select=id,username,source,memo,image_path,status,created_at&order=created_at.desc${filter}`,
+    `/rest/v1/purchases?select=id,username,source,memo,image_path,status,created_at&order=created_at.desc${queryFilters}`,
     null,
     null
   );
@@ -587,6 +605,27 @@ async function getPurchasesFromSupabase(username) {
     : [];
 
   return { success: true, data: list };
+}
+
+function getAdminDateFilter(period) {
+  const now = new Date();
+
+  if (period === 'today') {
+    const kst = new Date(now.toLocaleString('en-US', { timeZone: 'Asia/Seoul' }));
+    kst.setHours(0, 0, 0, 0);
+    const offsetMs = 9 * 60 * 60 * 1000;
+    return new Date(kst.getTime() - offsetMs).toISOString();
+  }
+
+  if (period === '7days') {
+    return new Date(now.getTime() - (7 * 24 * 60 * 60 * 1000)).toISOString();
+  }
+
+  if (period === '30days') {
+    return new Date(now.getTime() - (30 * 24 * 60 * 60 * 1000)).toISOString();
+  }
+
+  return '';
 }
 
 async function getPurchaseRecordById(id) {
@@ -612,7 +651,7 @@ async function insertPurchaseRecord(item) {
       source: item.type,
       memo: item.memo,
       image_path: item.imagePath,
-      status: '진행중'
+      status: '확인중'
     },
     'return=representation'
   );
@@ -1410,10 +1449,27 @@ app.get('/admin-logout', (req, res) => {
 
 // ===============================
 // 관리자 페이지
-// Supabase 구매내역을 조회하여 표시합니다.
+// Supabase 구매내역을 조회하며 회원/상태/기간 필터를 제공합니다.
 // ===============================
 app.get('/admin', requireAdmin, async (req, res) => {
-  const result = await getPurchasesFromSupabase();
+  const selectedMember = String(req.query.member || '').trim().toLowerCase();
+  const selectedStatus = ['확인중', '진행중', '적중', '미적중'].includes(req.query.status)
+    ? req.query.status
+    : '';
+  const selectedPeriod = ['today', '7days', '30days'].includes(req.query.period)
+    ? req.query.period
+    : '';
+
+  const memberResult = await getMemberListFromSupabase();
+  const members = memberResult.success && Array.isArray(memberResult.data)
+    ? memberResult.data
+    : [];
+
+  const result = await getPurchasesFromSupabase('', {
+    username: selectedMember,
+    status: selectedStatus,
+    fromDate: getAdminDateFilter(selectedPeriod)
+  });
 
   if (!result.success) {
     return res.status(500).send(layout('구매내역 조회 실패', `
@@ -1426,6 +1482,12 @@ app.get('/admin', requireAdmin, async (req, res) => {
   }
 
   const purchaseList = result.data;
+
+  const memberOptions = members.map((member) => `
+    <option value="${escapeHtml(member.username)}" ${selectedMember === member.username ? 'selected' : ''}>
+      ${escapeHtml(member.username)}${member.memo ? ` - ${escapeHtml(member.memo)}` : ''}
+    </option>
+  `).join('');
 
   const rows = purchaseList.map((item, index) => {
     const memoHtml = escapeHtml(item.memo).replace(/\n/g, '<br>');
@@ -1440,15 +1502,19 @@ app.get('/admin', requireAdmin, async (req, res) => {
         <td>
           <span class="status ${getStatusClass(item.status)}">${escapeHtml(item.status)}</span>
           <div class="admin-actions">
-            <form method="POST" action="/admin/status/${safeId}">
-              <input type="hidden" name="status" value="진행중" />
-              <button class="btn-small btn-yellow" type="submit">진행중</button>
+            <form method="POST" action="/admin/status/${safeId}?member=${encodeURIComponent(selectedMember)}&status=${encodeURIComponent(selectedStatus)}&period=${encodeURIComponent(selectedPeriod)}">
+              <input type="hidden" name="status" value="확인중" />
+              <button class="btn-small btn-yellow" type="submit">확인중</button>
             </form>
-            <form method="POST" action="/admin/status/${safeId}">
+            <form method="POST" action="/admin/status/${safeId}?member=${encodeURIComponent(selectedMember)}&status=${encodeURIComponent(selectedStatus)}&period=${encodeURIComponent(selectedPeriod)}">
+              <input type="hidden" name="status" value="진행중" />
+              <button class="btn-small btn-blue" type="submit">진행중</button>
+            </form>
+            <form method="POST" action="/admin/status/${safeId}?member=${encodeURIComponent(selectedMember)}&status=${encodeURIComponent(selectedStatus)}&period=${encodeURIComponent(selectedPeriod)}">
               <input type="hidden" name="status" value="적중" />
               <button class="btn-small" type="submit">적중</button>
             </form>
-            <form method="POST" action="/admin/status/${safeId}">
+            <form method="POST" action="/admin/status/${safeId}?member=${encodeURIComponent(selectedMember)}&status=${encodeURIComponent(selectedStatus)}&period=${encodeURIComponent(selectedPeriod)}">
               <input type="hidden" name="status" value="미적중" />
               <button class="btn-small btn-red" type="submit">미적중</button>
             </form>
@@ -1459,7 +1525,7 @@ app.get('/admin', requireAdmin, async (req, res) => {
           <img class="admin-img" src="${item.image}" onclick="openImage('${item.id}')" alt="구매내역 이미지" />
           <div class="admin-actions">
             <button class="btn-small btn-blue" onclick="openImage('${item.id}')">크게 보기</button>
-            <form method="POST" action="/admin/delete/${safeId}" onsubmit="return confirm('이 구매내역을 삭제할까요?');">
+            <form method="POST" action="/admin/delete/${safeId}?member=${encodeURIComponent(selectedMember)}&status=${encodeURIComponent(selectedStatus)}&period=${encodeURIComponent(selectedPeriod)}" onsubmit="return confirm('이 구매내역을 삭제할까요?');">
               <button class="btn-small btn-red" type="submit">삭제</button>
             </form>
           </div>
@@ -1472,6 +1538,14 @@ app.get('/admin', requireAdmin, async (req, res) => {
   purchaseList.forEach((item) => {
     imageMap[item.id] = item.image;
   });
+
+  const activeFilterText = [
+    selectedMember ? `회원: ${selectedMember}` : '',
+    selectedStatus ? `상태: ${selectedStatus}` : '',
+    selectedPeriod === 'today' ? '기간: 오늘' : '',
+    selectedPeriod === '7days' ? '기간: 최근 7일' : '',
+    selectedPeriod === '30days' ? '기간: 최근 30일' : ''
+  ].filter(Boolean).join(' / ');
 
   res.send(layout('SM1357 관리자', `
     <div class="admin-top">
@@ -1497,9 +1571,51 @@ app.get('/admin', requireAdmin, async (req, res) => {
     </div>
 
     <div class="card">
+      <h2>구매내역 검색</h2>
+      <form method="GET" action="/admin">
+        <div class="row">
+          <div style="flex:1;min-width:170px;">
+            <label>회원별 보기</label>
+            <select name="member">
+              <option value="">전체 회원</option>
+              ${memberOptions}
+            </select>
+          </div>
+          <div style="flex:1;min-width:170px;">
+            <label>상태별 보기</label>
+            <select name="status">
+              <option value="">전체 상태</option>
+              <option value="확인중" ${selectedStatus === '확인중' ? 'selected' : ''}>확인중</option>
+              <option value="진행중" ${selectedStatus === '진행중' ? 'selected' : ''}>진행중</option>
+              <option value="적중" ${selectedStatus === '적중' ? 'selected' : ''}>적중</option>
+              <option value="미적중" ${selectedStatus === '미적중' ? 'selected' : ''}>미적중</option>
+            </select>
+          </div>
+          <div style="flex:1;min-width:170px;">
+            <label>기간별 보기</label>
+            <select name="period">
+              <option value="">전체 기간</option>
+              <option value="today" ${selectedPeriod === 'today' ? 'selected' : ''}>오늘</option>
+              <option value="7days" ${selectedPeriod === '7days' ? 'selected' : ''}>최근 7일</option>
+              <option value="30days" ${selectedPeriod === '30days' ? 'selected' : ''}>최근 30일</option>
+            </select>
+          </div>
+        </div>
+        <div class="row">
+          <button class="btn btn-blue" type="submit">검색</button>
+          <a class="btn btn-gray" href="/admin">필터 초기화</a>
+        </div>
+      </form>
+      ${activeFilterText
+        ? `<div class="download-guide" style="margin-top:16px;">현재 조건: ${escapeHtml(activeFilterText)} / 검색 결과 ${purchaseList.length}건</div>`
+        : `<div class="download-guide" style="margin-top:16px;">전체 구매내역 ${purchaseList.length}건</div>`
+      }
+    </div>
+
+    <div class="card">
       <h2>구매내역 목록</h2>
       ${purchaseList.length === 0
-        ? '<p class="muted">아직 전송된 구매내역이 없습니다.</p>'
+        ? '<p class="muted">조건에 맞는 구매내역이 없습니다.</p>'
         : `
           <table>
             <thead>
@@ -1832,14 +1948,21 @@ app.post('/admin/telegram-test', requireAdmin, async (req, res) => {
 app.post('/admin/status/:id', requireAdmin, async (req, res) => {
   const id = Number(req.params.id);
   const status = req.body.status;
-  const allowedStatus = ['진행중', '적중', '미적중'];
+  const allowedStatus = ['확인중', '진행중', '적중', '미적중'];
 
   if (!allowedStatus.includes(status)) {
     return res.status(400).send('허용되지 않은 상태입니다.');
   }
 
   await updatePurchaseStatusInSupabase(id, status);
-  res.redirect('/admin');
+
+  const query = new URLSearchParams({
+    member: String(req.query.member || ''),
+    status: String(req.query.status || ''),
+    period: String(req.query.period || '')
+  }).toString();
+
+  res.redirect(`/admin?${query}`);
 });
 
 // ===============================
@@ -1856,7 +1979,13 @@ app.post('/admin/delete/:id', requireAdmin, async (req, res) => {
     }
   }
 
-  res.redirect('/admin');
+  const query = new URLSearchParams({
+    member: String(req.query.member || ''),
+    status: String(req.query.status || ''),
+    period: String(req.query.period || '')
+  }).toString();
+
+  res.redirect(`/admin?${query}`);
 });
 
 // ===============================
