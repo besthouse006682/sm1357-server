@@ -95,10 +95,9 @@ const ADMIN_ID = 'admin';
 const ADMIN_PASSWORD = 'admin1357';
 
 // ===============================
-// 임시 구매내역 저장소
-// 주의: Render 서버 재시작/재배포 시 초기화됨
+// 구매내역 저장소
+// 구매내역 이미지와 상태는 Supabase Storage / purchases 테이블에 영구 저장됩니다.
 // ===============================
-let purchaseList = [];
 
 // ===============================
 // 공통 함수
@@ -370,7 +369,7 @@ function memberResultPage(title, message, success) {
 // purchase-images 비공개 버킷에 작은 테스트 파일을 저장한 뒤 바로 삭제합니다.
 // 실제 구매내역 저장 방식은 아직 변경하지 않습니다.
 // ===============================
-function supabaseStorageHeaders(hasBody) {
+function supabaseStorageHeaders(hasBody, contentType) {
   const headers = {
     apikey: SUPABASE_SECRET_KEY,
     Accept: 'application/json'
@@ -383,14 +382,14 @@ function supabaseStorageHeaders(hasBody) {
   }
 
   if (hasBody) {
-    headers['Content-Type'] = 'text/plain; charset=utf-8';
+    headers['Content-Type'] = contentType || 'application/octet-stream';
     headers['x-upsert'] = 'true';
   }
 
   return headers;
 }
 
-function supabaseStorageObjectRequest(method, objectPath, bodyBuffer) {
+function supabaseStorageObjectRequest(method, objectPath, bodyBuffer, contentType) {
   return new Promise((resolve) => {
     if (!SUPABASE_URL || !SUPABASE_SECRET_KEY) {
       resolve({ success: false, message: 'Render의 Supabase 환경변수가 없습니다.' });
@@ -407,7 +406,7 @@ function supabaseStorageObjectRequest(method, objectPath, bodyBuffer) {
       return;
     }
 
-    const headers = supabaseStorageHeaders(Boolean(bodyBuffer));
+    const headers = supabaseStorageHeaders(Boolean(bodyBuffer), contentType);
     if (bodyBuffer) headers['Content-Length'] = bodyBuffer.length;
 
     const request = https.request(
@@ -452,7 +451,8 @@ async function testSupabaseStorageConnection() {
   const upload = await supabaseStorageObjectRequest(
     'POST',
     path,
-    Buffer.from('SM1357 Storage test', 'utf8')
+    Buffer.from('SM1357 Storage test', 'utf8'),
+    'text/plain; charset=utf-8'
   );
 
   if (!upload.success) {
@@ -469,6 +469,251 @@ async function testSupabaseStorageConnection() {
   }
 
   return { success: true };
+}
+
+// ===============================
+// 구매내역 영구 저장 공통 함수
+// 이미지: purchase-images 버킷 / 상태·기록: purchases 테이블
+// ===============================
+function supabasePurchaseRequest(method, endpoint, data, prefer) {
+  return new Promise((resolve) => {
+    if (!SUPABASE_URL || !SUPABASE_SECRET_KEY) {
+      resolve({ success: false, message: 'Render의 Supabase 환경변수가 없습니다.' });
+      return;
+    }
+
+    let apiUrl;
+    try {
+      apiUrl = new URL(endpoint, SUPABASE_URL);
+    } catch (error) {
+      resolve({ success: false, message: 'SUPABASE_URL 형식이 올바르지 않습니다.' });
+      return;
+    }
+
+    const payload = data ? JSON.stringify(data) : '';
+    const headers = {
+      apikey: SUPABASE_SECRET_KEY,
+      Accept: 'application/json'
+    };
+
+    if (!SUPABASE_SECRET_KEY.startsWith('sb_secret_')) {
+      headers.Authorization = `Bearer ${SUPABASE_SECRET_KEY}`;
+    }
+
+    if (payload) {
+      headers['Content-Type'] = 'application/json';
+      headers['Content-Length'] = Buffer.byteLength(payload);
+    }
+
+    if (prefer) {
+      headers.Prefer = prefer;
+    }
+
+    const request = https.request(
+      {
+        hostname: apiUrl.hostname,
+        path: apiUrl.pathname + apiUrl.search,
+        method,
+        headers
+      },
+      (response) => {
+        let body = '';
+        response.on('data', (chunk) => { body += chunk; });
+        response.on('end', () => {
+          let parsed = null;
+          try { parsed = body ? JSON.parse(body) : null; } catch (e) { parsed = body; }
+
+          if (response.statusCode >= 200 && response.statusCode < 300) {
+            resolve({ success: true, data: parsed });
+            return;
+          }
+
+          const message = parsed && parsed.message
+            ? parsed.message
+            : `Supabase 구매내역 오류 코드: ${response.statusCode}`;
+          console.error('[SUPABASE PURCHASE]', response.statusCode, body);
+          resolve({ success: false, message });
+        });
+      }
+    );
+
+    request.on('error', (error) => {
+      console.error('[SUPABASE PURCHASE] 요청 오류:', error.message);
+      resolve({ success: false, message: error.message });
+    });
+
+    if (payload) request.write(payload);
+    request.end();
+  });
+}
+
+function displayPurchaseDate(value) {
+  try {
+    return new Date(value).toLocaleString('ko-KR', { timeZone: 'Asia/Seoul' });
+  } catch (error) {
+    return String(value || '');
+  }
+}
+
+function normalizePurchase(row) {
+  return {
+    id: row.id,
+    username: row.username,
+    type: row.source || 'IMAGE',
+    memo: row.memo || '',
+    imagePath: row.image_path,
+    image: `/purchase-image/${encodeURIComponent(String(row.id))}`,
+    status: row.status || '진행중',
+    createdAt: displayPurchaseDate(row.created_at)
+  };
+}
+
+async function getPurchasesFromSupabase(username) {
+  const filter = username
+    ? `&username=eq.${encodeURIComponent(username)}`
+    : '';
+
+  const result = await supabasePurchaseRequest(
+    'GET',
+    `/rest/v1/purchases?select=id,username,source,memo,image_path,status,created_at&order=created_at.desc${filter}`,
+    null,
+    null
+  );
+
+  if (!result.success) return result;
+
+  const list = Array.isArray(result.data)
+    ? result.data.map(normalizePurchase)
+    : [];
+
+  return { success: true, data: list };
+}
+
+async function getPurchaseRecordById(id) {
+  const result = await supabasePurchaseRequest(
+    'GET',
+    `/rest/v1/purchases?select=id,username,source,memo,image_path,status,created_at&id=eq.${encodeURIComponent(String(id))}&limit=1`,
+    null,
+    null
+  );
+
+  if (!result.success) return result;
+
+  const row = Array.isArray(result.data) && result.data.length > 0 ? result.data[0] : null;
+  return { success: true, data: row };
+}
+
+async function insertPurchaseRecord(item) {
+  const result = await supabasePurchaseRequest(
+    'POST',
+    '/rest/v1/purchases?select=id,username,source,memo,image_path,status,created_at',
+    {
+      username: item.username,
+      source: item.type,
+      memo: item.memo,
+      image_path: item.imagePath,
+      status: '진행중'
+    },
+    'return=representation'
+  );
+
+  if (!result.success) return result;
+
+  const row = Array.isArray(result.data) ? result.data[0] : result.data;
+  return { success: true, data: normalizePurchase(row) };
+}
+
+async function updatePurchaseStatusInSupabase(id, status) {
+  return supabasePurchaseRequest(
+    'PATCH',
+    `/rest/v1/purchases?id=eq.${encodeURIComponent(String(id))}`,
+    { status },
+    'return=minimal'
+  );
+}
+
+async function deletePurchaseRecordInSupabase(id) {
+  return supabasePurchaseRequest(
+    'DELETE',
+    `/rest/v1/purchases?id=eq.${encodeURIComponent(String(id))}`,
+    null,
+    'return=minimal'
+  );
+}
+
+function decodePurchaseImage(dataUrl) {
+  const match = String(dataUrl || '').match(/^data:(image\/[a-zA-Z0-9.+-]+);base64,(.+)$/s);
+  if (!match) {
+    return { success: false, message: '전송된 이미지 형식이 올바르지 않습니다.' };
+  }
+
+  const mimeType = match[1].toLowerCase();
+  const allowed = ['image/jpeg', 'image/jpg', 'image/png', 'image/webp'];
+  if (!allowed.includes(mimeType)) {
+    return { success: false, message: '지원하지 않는 이미지 형식입니다.' };
+  }
+
+  const buffer = Buffer.from(match[2], 'base64');
+  if (!buffer.length) {
+    return { success: false, message: '이미지 데이터가 없습니다.' };
+  }
+
+  if (buffer.length > 20 * 1024 * 1024) {
+    return { success: false, message: '이미지 크기가 너무 큽니다.' };
+  }
+
+  const extension = mimeType.includes('png')
+    ? 'png'
+    : mimeType.includes('webp')
+      ? 'webp'
+      : 'jpg';
+
+  return { success: true, buffer, mimeType, extension };
+}
+
+function downloadStorageImage(objectPath) {
+  return new Promise((resolve) => {
+    const safePath = objectPath.split('/').map(encodeURIComponent).join('/');
+    let apiUrl;
+
+    try {
+      apiUrl = new URL(`/storage/v1/object/purchase-images/${safePath}`, SUPABASE_URL);
+    } catch (error) {
+      resolve({ success: false, message: '이미지 주소 오류' });
+      return;
+    }
+
+    const headers = supabaseStorageHeaders(false, null);
+    const request = https.request(
+      {
+        hostname: apiUrl.hostname,
+        path: apiUrl.pathname + apiUrl.search,
+        method: 'GET',
+        headers
+      },
+      (response) => {
+        const chunks = [];
+        response.on('data', (chunk) => { chunks.push(chunk); });
+        response.on('end', () => {
+          if (response.statusCode >= 200 && response.statusCode < 300) {
+            resolve({
+              success: true,
+              buffer: Buffer.concat(chunks),
+              contentType: response.headers['content-type'] || 'image/jpeg'
+            });
+          } else {
+            resolve({ success: false, message: `이미지 조회 오류: ${response.statusCode}` });
+          }
+        });
+      }
+    );
+
+    request.on('error', (error) => {
+      resolve({ success: false, message: error.message });
+    });
+
+    request.end();
+  });
 }
 
 function layout(title, body) {
@@ -876,17 +1121,27 @@ app.get('/member-logout', (req, res) => {
 
 // ===============================
 // 회원 페이지
+// Supabase 구매내역을 조회하여 표시합니다.
 // ===============================
-app.get('/betman', requireMember, (req, res) => {
+app.get('/betman', requireMember, async (req, res) => {
   const username = req.memberId;
-  const myList = purchaseList.filter((item) => item.username === username);
+  const result = await getPurchasesFromSupabase(username);
+
+  if (!result.success) {
+    return res.status(500).send(layout('구매내역 조회 실패', `
+      <div class="card">
+        <h1 class="bad">구매내역 조회 실패</h1>
+        <p>${escapeHtml(result.message)}</p>
+        <a class="btn btn-blue" href="/betman?user=${encodeURIComponent(username)}">다시 시도</a>
+      </div>
+    `));
+  }
+
+  const myList = result.data;
 
   const myRows = myList.map((item) => `
     <div class="history-item">
-      ${item.image
-        ? `<img class="member-img" src="${item.image}" onclick="openMemberImage('${item.id}')" alt="구매내역 이미지" />`
-        : '<div class="member-img" style="display:flex;align-items:center;justify-content:center;color:#9ca3af;">이미지 없음</div>'
-      }
+      <img class="member-img" src="${item.image}" onclick="openMemberImage('${item.id}')" alt="구매내역 이미지" />
       <div class="history-info">
         <span class="status ${getStatusClass(item.status)}">${escapeHtml(item.status)}</span>
         <span class="muted">${escapeHtml(item.createdAt)}</span>
@@ -900,7 +1155,7 @@ app.get('/betman', requireMember, (req, res) => {
 
   const memberImageMap = {};
   myList.forEach((item) => {
-    if (item.image) memberImageMap[item.id] = item.image;
+    memberImageMap[item.id] = item.image;
   });
 
   res.send(layout('SM1357 회원 페이지', `
@@ -972,72 +1227,116 @@ app.get('/betman', requireMember, (req, res) => {
 });
 
 // ===============================
+// 구매내역 비공개 이미지 제공
+// 관리자 또는 본인 회원만 조회할 수 있습니다.
+// ===============================
+app.get('/purchase-image/:id', async (req, res) => {
+  const id = Number(req.params.id);
+  const recordResult = await getPurchaseRecordById(id);
+
+  if (!recordResult.success || !recordResult.data) {
+    return res.status(404).send('이미지를 찾을 수 없습니다.');
+  }
+
+  const record = recordResult.data;
+  const memberId = getMemberCookie(req);
+  let permitted = isAdminLoggedIn(req);
+
+  if (!permitted && memberId && memberId === record.username) {
+    const activeResult = await checkActiveMemberFromSupabase(memberId);
+    permitted = activeResult.success && activeResult.data && activeResult.data.success === true;
+  }
+
+  if (!permitted) {
+    return res.status(403).send('접근 권한이 없습니다.');
+  }
+
+  const imageResult = await downloadStorageImage(record.image_path);
+  if (!imageResult.success) {
+    return res.status(404).send('이미지를 불러오지 못했습니다.');
+  }
+
+  res.setHeader('Content-Type', imageResult.contentType);
+  res.setHeader('Cache-Control', 'private, max-age=60');
+  res.end(imageResult.buffer);
+});
+
+// ===============================
 // 회원: 본인 구매내역 개별 삭제
 // ===============================
-app.post('/member/delete/:id', requireMember, (req, res) => {
+app.post('/member/delete/:id', requireMember, async (req, res) => {
   const id = Number(req.params.id);
   const username = req.memberId;
+  const recordResult = await getPurchaseRecordById(id);
 
-  purchaseList = purchaseList.filter((purchase) => {
-    return !(purchase.id === id && purchase.username === username);
-  });
+  if (!recordResult.success || !recordResult.data || recordResult.data.username !== username) {
+    return res.redirect(`/betman?user=${encodeURIComponent(username)}`);
+  }
+
+  const deleteDb = await deletePurchaseRecordInSupabase(id);
+  if (deleteDb.success) {
+    await supabaseStorageObjectRequest('DELETE', recordResult.data.image_path, null, null);
+  }
 
   res.redirect(`/betman?user=${encodeURIComponent(username)}`);
 });
 
 // ===============================
 // 구매내역 전송 API
-// 모바일 앱/PC 확장프로그램이 계속 사용하는 기능이므로 삭제 금지
+// 모바일 앱/PC 확장프로그램이 계속 사용하는 기능
+// 이미지와 상태를 Supabase에 영구 저장합니다.
 // ===============================
 app.post('/api/send', async (req, res) => {
   const username = String(req.body.username || '').trim().toLowerCase();
   const { type, memo, image } = req.body;
 
   if (!username) {
-    return res.status(400).json({
-      success: false,
-      message: '회원 정보가 올바르지 않습니다.'
-    });
+    return res.status(400).json({ success: false, message: '회원 정보가 올바르지 않습니다.' });
   }
 
   const activeResult = await checkActiveMemberFromSupabase(username);
-
   if (!activeResult.success) {
-    return res.status(500).json({
-      success: false,
-      message: '회원 상태 확인 중 오류가 발생했습니다.'
-    });
+    return res.status(500).json({ success: false, message: '회원 상태 확인 중 오류가 발생했습니다.' });
   }
 
   if (!activeResult.data || activeResult.data.success !== true) {
-    return res.status(403).json({
-      success: false,
-      message: '사용할 수 없는 회원 계정입니다.'
-    });
+    return res.status(403).json({ success: false, message: '사용할 수 없는 회원 계정입니다.' });
   }
 
-  if (!memo && !image) {
-    return res.status(400).json({
-      success: false,
-      message: '메모 또는 이미지가 필요합니다.'
-    });
+  if (!image) {
+    return res.status(400).json({ success: false, message: '구매내역 이미지가 필요합니다.' });
   }
 
-  const item = {
-    id: Date.now(),
+  const decoded = decodePurchaseImage(image);
+  if (!decoded.success) {
+    return res.status(400).json({ success: false, message: decoded.message });
+  }
+
+  const storagePath = `${username}/${Date.now()}-${Math.random().toString(36).slice(2, 10)}.${decoded.extension}`;
+  const upload = await supabaseStorageObjectRequest(
+    'POST',
+    storagePath,
+    decoded.buffer,
+    decoded.mimeType
+  );
+
+  if (!upload.success) {
+    return res.status(500).json({ success: false, message: `이미지 저장 실패: ${upload.message}` });
+  }
+
+  const insert = await insertPurchaseRecord({
     username,
     type: type || 'IMAGE',
     memo: memo || '',
-    image: image || '',
-    status: '진행중',
-    createdAt: new Date().toLocaleString('ko-KR', {
-      timeZone: 'Asia/Seoul'
-    })
-  };
+    imagePath: storagePath
+  });
 
-  purchaseList.unshift(item);
+  if (!insert.success) {
+    await supabaseStorageObjectRequest('DELETE', storagePath, null, null);
+    return res.status(500).json({ success: false, message: `구매내역 저장 실패: ${insert.message}` });
+  }
 
-  // 신규 구매내역 접수 즉시 텔레그램으로 관리자에게 자동 알림
+  const item = insert.data;
   const notificationText = [
     '📩 SM1357 신규 구매내역',
     '',
@@ -1049,7 +1348,6 @@ app.post('/api/send', async (req, res) => {
     'https://sm1357.kr/admin-login'
   ].join('\n');
 
-  // 이미지 저장 응답을 늦추지 않도록 알림은 비동기로 발송합니다.
   sendTelegramMessage(notificationText).catch((error) => {
     console.error('[TELEGRAM] 신규 구매내역 알림 오류:', error.message);
   });
@@ -1057,6 +1355,8 @@ app.post('/api/send', async (req, res) => {
   res.json({ success: true, item });
 });
 
+// ===============================
+// 관리자 로그인 페이지
 // ===============================
 // 관리자 로그인 페이지
 // 주소를 아는 관리자만 접속: /admin-login
@@ -1110,8 +1410,23 @@ app.get('/admin-logout', (req, res) => {
 
 // ===============================
 // 관리자 페이지
+// Supabase 구매내역을 조회하여 표시합니다.
 // ===============================
-app.get('/admin', requireAdmin, (req, res) => {
+app.get('/admin', requireAdmin, async (req, res) => {
+  const result = await getPurchasesFromSupabase();
+
+  if (!result.success) {
+    return res.status(500).send(layout('구매내역 조회 실패', `
+      <div class="card">
+        <h1 class="bad">구매내역 조회 실패</h1>
+        <p>${escapeHtml(result.message)}</p>
+        <a class="btn btn-blue" href="/admin">다시 시도</a>
+      </div>
+    `));
+  }
+
+  const purchaseList = result.data;
+
   const rows = purchaseList.map((item, index) => {
     const memoHtml = escapeHtml(item.memo).replace(/\n/g, '<br>');
     const safeId = encodeURIComponent(String(item.id));
@@ -1141,21 +1456,13 @@ app.get('/admin', requireAdmin, (req, res) => {
         </td>
         <td>${escapeHtml(item.createdAt)}</td>
         <td>
-          ${item.image
-            ? `<img class="admin-img" src="${item.image}" onclick="openImage('${item.id}')" alt="구매내역 이미지" />
-               <div class="admin-actions">
-                 <button class="btn-small btn-blue" onclick="openImage('${item.id}')">크게 보기</button>
-                 <form method="POST" action="/admin/delete/${safeId}" onsubmit="return confirm('이 구매내역을 삭제할까요?');">
-                   <button class="btn-small btn-red" type="submit">삭제</button>
-                 </form>
-               </div>`
-            : `<span class="muted">이미지 없음</span>
-               <div class="admin-actions">
-                 <form method="POST" action="/admin/delete/${safeId}" onsubmit="return confirm('이 구매내역을 삭제할까요?');">
-                   <button class="btn-small btn-red" type="submit">삭제</button>
-                 </form>
-               </div>`
-          }
+          <img class="admin-img" src="${item.image}" onclick="openImage('${item.id}')" alt="구매내역 이미지" />
+          <div class="admin-actions">
+            <button class="btn-small btn-blue" onclick="openImage('${item.id}')">크게 보기</button>
+            <form method="POST" action="/admin/delete/${safeId}" onsubmit="return confirm('이 구매내역을 삭제할까요?');">
+              <button class="btn-small btn-red" type="submit">삭제</button>
+            </form>
+          </div>
         </td>
       </tr>
     `;
@@ -1163,14 +1470,14 @@ app.get('/admin', requireAdmin, (req, res) => {
 
   const imageMap = {};
   purchaseList.forEach((item) => {
-    if (item.image) imageMap[item.id] = item.image;
+    imageMap[item.id] = item.image;
   });
 
   res.send(layout('SM1357 관리자', `
     <div class="admin-top">
       <div>
         <h1>관리자 페이지</h1>
-        <p class="muted">회원이 보낸 구매내역 이미지와 처리 상태를 관리합니다.</p>
+        <p class="muted">구매내역 이미지와 처리 상태는 Supabase에 영구 저장됩니다.</p>
       </div>
       <div class="row">
         <a class="btn" href="/admin">새로고침</a>
@@ -1235,11 +1542,7 @@ app.get('/admin', requireAdmin, (req, res) => {
 });
 
 // ===============================
-// 관리자: 텔레그램 알림 테스트
-// 회원 전송 자동 알림은 아직 연결하지 않습니다.
-// ===============================
-// 관리자: Supabase DB 연결 테스트
-// 회원 로그인/구매내역 저장 방식은 아직 변경하지 않습니다.
+// 관리자: 회원관리 페이지
 // ===============================
 // 관리자: 회원관리 페이지
 // 현재 단계에서는 Supabase 회원 목록과 관리기능만 제공합니다.
@@ -1526,7 +1829,7 @@ app.post('/admin/telegram-test', requireAdmin, async (req, res) => {
 // ===============================
 // 관리자: 구매내역 상태 변경
 // ===============================
-app.post('/admin/status/:id', requireAdmin, (req, res) => {
+app.post('/admin/status/:id', requireAdmin, async (req, res) => {
   const id = Number(req.params.id);
   const status = req.body.status;
   const allowedStatus = ['진행중', '적중', '미적중'];
@@ -1535,36 +1838,58 @@ app.post('/admin/status/:id', requireAdmin, (req, res) => {
     return res.status(400).send('허용되지 않은 상태입니다.');
   }
 
-  const item = purchaseList.find((purchase) => purchase.id === id);
-  if (item) item.status = status;
-
+  await updatePurchaseStatusInSupabase(id, status);
   res.redirect('/admin');
 });
 
 // ===============================
 // 관리자: 구매내역 개별 삭제
 // ===============================
-app.post('/admin/delete/:id', requireAdmin, (req, res) => {
+app.post('/admin/delete/:id', requireAdmin, async (req, res) => {
   const id = Number(req.params.id);
-  purchaseList = purchaseList.filter((purchase) => purchase.id !== id);
+  const recordResult = await getPurchaseRecordById(id);
+
+  if (recordResult.success && recordResult.data) {
+    const deleteDb = await deletePurchaseRecordInSupabase(id);
+    if (deleteDb.success) {
+      await supabaseStorageObjectRequest('DELETE', recordResult.data.image_path, null, null);
+    }
+  }
+
   res.redirect('/admin');
 });
 
 // ===============================
 // 관리자: 구매내역 전체 삭제
 // ===============================
-app.get('/admin/clear', requireAdmin, (req, res) => {
-  purchaseList = [];
+app.get('/admin/clear', requireAdmin, async (req, res) => {
+  const result = await getPurchasesFromSupabase();
+
+  if (result.success) {
+    for (const item of result.data) {
+      await deletePurchaseRecordInSupabase(item.id);
+      await supabaseStorageObjectRequest('DELETE', item.imagePath, null, null);
+    }
+  }
+
   res.redirect('/admin');
 });
 
 // ===============================
 // 관리자 JSON 확인용
 // ===============================
-app.get('/api/list', requireAdmin, (req, res) => {
-  res.json({ success: true, count: purchaseList.length, list: purchaseList });
+app.get('/api/list', requireAdmin, async (req, res) => {
+  const result = await getPurchasesFromSupabase();
+
+  if (!result.success) {
+    return res.status(500).json({ success: false, message: result.message });
+  }
+
+  res.json({ success: true, count: result.data.length, list: result.data });
 });
 
+// ===============================
+// 회원 프로그램 다운로드
 // ===============================
 // 회원 프로그램 다운로드
 // ===============================
