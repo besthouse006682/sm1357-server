@@ -15,6 +15,13 @@ const TELEGRAM_BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || '';
 const TELEGRAM_CHAT_ID = process.env.TELEGRAM_CHAT_ID || '';
 
 // ===============================
+// Supabase 연결 설정
+// 현재 단계에서는 관리자 DB 연결 테스트에만 사용합니다.
+// ===============================
+const SUPABASE_URL = process.env.SUPABASE_URL || '';
+const SUPABASE_SECRET_KEY = process.env.SUPABASE_SECRET_KEY || '';
+
+// ===============================
 // 간단 쿠키 처리
 // ===============================
 function parseCookies(req) {
@@ -173,6 +180,73 @@ function sendTelegramMessage(text) {
     });
 
     request.write(payload);
+    request.end();
+  });
+}
+
+// ===============================
+// Supabase 연결 테스트 함수
+// members 테이블 조회만 확인하며 기존 기능은 변경하지 않습니다.
+// ===============================
+function testSupabaseConnection() {
+  return new Promise((resolve) => {
+    if (!SUPABASE_URL || !SUPABASE_SECRET_KEY) {
+      resolve({ success: false, message: 'Render의 Supabase 환경변수가 없습니다.' });
+      return;
+    }
+
+    let apiUrl;
+    try {
+      apiUrl = new URL('/rest/v1/members?select=username&order=username.asc&limit=3', SUPABASE_URL);
+    } catch (error) {
+      resolve({ success: false, message: 'SUPABASE_URL 형식이 올바르지 않습니다.' });
+      return;
+    }
+
+    const request = https.request(
+      {
+        hostname: apiUrl.hostname,
+        path: apiUrl.pathname + apiUrl.search,
+        method: 'GET',
+        headers: {
+          apikey: SUPABASE_SECRET_KEY,
+          Accept: 'application/json'
+        }
+      },
+      (response) => {
+        let body = '';
+
+        response.on('data', (chunk) => {
+          body += chunk;
+        });
+
+        response.on('end', () => {
+          if (response.statusCode < 200 || response.statusCode >= 300) {
+            console.error('[SUPABASE] 연결 실패:', response.statusCode, body);
+            resolve({ success: false, message: `Supabase 오류 코드: ${response.statusCode}` });
+            return;
+          }
+
+          try {
+            const rows = JSON.parse(body);
+            const usernames = Array.isArray(rows)
+              ? rows.map((row) => row.username).filter(Boolean)
+              : [];
+
+            console.log('[SUPABASE] 연결 성공:', usernames.join(', '));
+            resolve({ success: true, usernames });
+          } catch (error) {
+            resolve({ success: false, message: 'Supabase 응답 처리 실패' });
+          }
+        });
+      }
+    );
+
+    request.on('error', (error) => {
+      console.error('[SUPABASE] 요청 오류:', error.message);
+      resolve({ success: false, message: error.message });
+    });
+
     request.end();
   });
 }
@@ -838,6 +912,9 @@ app.get('/admin', requireAdmin, (req, res) => {
         <form method="POST" action="/admin/telegram-test" style="margin:0;">
           <button class="btn btn-blue" type="submit">알림 테스트</button>
         </form>
+        <form method="POST" action="/admin/supabase-test" style="margin:0;">
+          <button class="btn btn-yellow" type="submit">DB 연결 테스트</button>
+        </form>
         <a class="btn btn-red" href="/admin/clear" onclick="return confirm('전체 구매내역을 삭제할까요?')">전체삭제</a>
         <a class="btn btn-gray" href="/admin-logout">관리자 로그아웃</a>
       </div>
@@ -891,6 +968,37 @@ app.get('/admin', requireAdmin, (req, res) => {
 // ===============================
 // 관리자: 텔레그램 알림 테스트
 // 회원 전송 자동 알림은 아직 연결하지 않습니다.
+// ===============================
+// 관리자: Supabase DB 연결 테스트
+// 회원 로그인/구매내역 저장 방식은 아직 변경하지 않습니다.
+// ===============================
+app.post('/admin/supabase-test', requireAdmin, async (req, res) => {
+  const result = await testSupabaseConnection();
+
+  if (result.success) {
+    const members = result.usernames.length > 0
+      ? result.usernames.map((username) => escapeHtml(username)).join(', ')
+      : '조회된 회원 없음';
+
+    return res.send(layout('DB 연결 성공', `
+      <div class="card">
+        <h1>Supabase 연결 성공</h1>
+        <p class="ok">영구 저장소 연결이 정상입니다.</p>
+        <p class="muted">확인 회원: ${members}</p>
+        <a class="btn btn-blue" href="/admin">관리자 페이지로 돌아가기</a>
+      </div>
+    `));
+  }
+
+  res.status(500).send(layout('DB 연결 실패', `
+    <div class="card">
+      <h1 class="bad">Supabase 연결 실패</h1>
+      <p>${escapeHtml(result.message)}</p>
+      <a class="btn btn-blue" href="/admin">관리자 페이지로 돌아가기</a>
+    </div>
+  `));
+});
+
 // ===============================
 app.post('/admin/telegram-test', requireAdmin, async (req, res) => {
   const now = new Date().toLocaleString('ko-KR', {
