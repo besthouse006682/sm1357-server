@@ -698,6 +698,23 @@ app.post('/api/send', (req, res) => {
 
   purchaseList.unshift(item);
 
+  // 신규 구매내역 접수 즉시 텔레그램으로 관리자에게 자동 알림
+  const notificationText = [
+    '📩 SM1357 신규 구매내역',
+    '',
+    `회원: ${item.username}`,
+    `시간: ${item.createdAt}`,
+    `상태: ${item.status}`,
+    '',
+    '관리자 페이지에서 이미지를 확인하세요.',
+    'https://sm1357.kr/admin-login'
+  ].join('\n');
+
+  // 이미지 저장 응답을 늦추지 않도록 알림은 비동기로 발송합니다.
+  sendTelegramMessage(notificationText).catch((error) => {
+    console.error('[TELEGRAM] 신규 구매내역 알림 오류:', error.message);
+  });
+
   res.json({ success: true, item });
 });
 
