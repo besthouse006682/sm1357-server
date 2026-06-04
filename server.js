@@ -1015,6 +1015,7 @@ app.get('/admin', requireAdmin, (req, res) => {
       </div>
       <div class="row">
         <a class="btn" href="/admin">새로고침</a>
+        <a class="btn btn-yellow" href="/admin/members">회원관리</a>
         <form method="POST" action="/admin/telegram-test" style="margin:0;">
           <button class="btn btn-blue" type="submit">알림 테스트</button>
         </form>
