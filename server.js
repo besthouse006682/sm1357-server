@@ -91,8 +91,10 @@ async function requireMember(req, res, next) {
 // ===============================
 // 관리자 계정
 // ===============================
-const ADMIN_ID = 'admin';
-const ADMIN_PASSWORD = 'admin1357';
+// 관리자 계정은 Render Environment에서만 관리합니다.
+// Render에 ADMIN_ID / ADMIN_PASSWORD를 반드시 설정하세요.
+const ADMIN_ID = process.env.ADMIN_ID || '';
+const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || '';
 
 // ===============================
 // 구매내역 저장소
@@ -1433,6 +1435,16 @@ app.get('/admin-login', (req, res) => {
 app.post('/admin-login', (req, res) => {
   const { adminId, adminPassword } = req.body;
 
+  if (!ADMIN_ID || !ADMIN_PASSWORD) {
+    return res.status(500).send(layout('관리자 설정 오류', `
+      <div class="card">
+        <h1 class="bad">관리자 설정 오류</h1>
+        <p>Render Environment에 ADMIN_ID / ADMIN_PASSWORD가 설정되어 있지 않습니다.</p>
+        <a class="btn btn-blue" href="/admin-login">다시 로그인</a>
+      </div>
+    `));
+  }
+
   if (adminId !== ADMIN_ID || adminPassword !== ADMIN_PASSWORD) {
     return res.send(layout('관리자 로그인 실패', `
       <div class="card">
@@ -1788,6 +1800,27 @@ app.post('/admin/members/create', requireAdmin, async (req, res) => {
   const username = String(req.body.username || '').trim().toLowerCase();
   const password = String(req.body.password || '');
   const memo = String(req.body.memo || '').trim();
+
+  const blockedMemberIds = [
+    'admin',
+    'administrator',
+    'root',
+    'manager',
+    'master',
+    'owner',
+    'system',
+    'support',
+    'sm1357',
+    'betman'
+  ];
+
+  if (blockedMemberIds.includes(username)) {
+    return res.status(400).send(memberResultPage(
+      '회원 생성 실패',
+      '관리자 또는 시스템 계정으로 오해될 수 있는 아이디는 회원ID로 사용할 수 없습니다.',
+      false
+    ));
+  }
 
   const result = await callMemberAdminFunction('admin_create_member', {
     p_username: username,
