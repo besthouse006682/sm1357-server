@@ -568,7 +568,8 @@ function normalizePurchase(row) {
     imagePath: row.image_path,
     image: `/purchase-image/${encodeURIComponent(String(row.id))}`,
     status: row.status || '확인중',
-    createdAt: displayPurchaseDate(row.created_at)
+    createdAt: displayPurchaseDate(row.created_at),
+    rawCreatedAt: row.created_at
   };
 }
 
@@ -630,6 +631,37 @@ function getAdminDateFilter(period) {
   }
 
   return '';
+}
+
+async function getPurchaseSummaryStats() {
+  const todayFrom = getAdminDateFilter('today');
+  const result = await getPurchasesFromSupabase();
+
+  if (!result.success) {
+    return {
+      success: false,
+      message: result.message,
+      stats: { today: 0, checking: 0, progress: 0, win: 0, lose: 0 }
+    };
+  }
+
+  const todayTime = todayFrom ? new Date(todayFrom).getTime() : 0;
+  const list = Array.isArray(result.data) ? result.data : [];
+  const stats = { today: 0, checking: 0, progress: 0, win: 0, lose: 0 };
+
+  for (const item of list) {
+    if (item.status === '확인중') stats.checking += 1;
+    if (item.status === '진행중') stats.progress += 1;
+    if (item.status === '적중') stats.win += 1;
+    if (item.status === '미적중') stats.lose += 1;
+
+    const itemTime = item.rawCreatedAt ? new Date(item.rawCreatedAt).getTime() : 0;
+    if (todayTime && itemTime >= todayTime) {
+      stats.today += 1;
+    }
+  }
+
+  return { success: true, stats };
 }
 
 async function getPurchaseRecordById(id) {
@@ -1071,6 +1103,39 @@ function layout(title, body) {
       tr { margin-bottom: 18px; border: 1px solid #374151; border-radius: 10px; overflow: hidden; }
       .admin-img { max-width: 100%; max-height: none; }
     }
+
+    .summary-grid {
+      display: grid;
+      grid-template-columns: repeat(5, minmax(120px, 1fr));
+      gap: 12px;
+      margin-bottom: 6px;
+    }
+
+    .summary-box {
+      background: #111827;
+      border: 1px solid #374151;
+      border-radius: 12px;
+      padding: 16px;
+    }
+
+    .summary-label {
+      color: #9ca3af;
+      font-size: 14px;
+      margin-bottom: 8px;
+    }
+
+    .summary-value {
+      font-size: 28px;
+      font-weight: 900;
+      color: #ffffff;
+    }
+
+    @media (max-width: 700px) {
+      .summary-grid {
+        grid-template-columns: repeat(2, minmax(120px, 1fr));
+      }
+    }
+
   </style>
 </head>
 <body>
@@ -1502,6 +1567,10 @@ app.get('/admin', requireAdmin, async (req, res) => {
   }
 
   const purchaseList = result.data;
+  const summaryResult = await getPurchaseSummaryStats();
+  const summaryStats = summaryResult.success
+    ? summaryResult.stats
+    : { today: 0, checking: 0, progress: 0, win: 0, lose: 0 };
 
   const memberOptions = members.map((member) => `
     <option value="${escapeHtml(member.username)}" ${selectedMember === member.username ? 'selected' : ''}>
@@ -1587,6 +1656,32 @@ app.get('/admin', requireAdmin, async (req, res) => {
         </form>
         <a class="btn btn-red" href="/admin/clear" onclick="return confirm('전체 구매내역을 삭제할까요?')">전체삭제</a>
         <a class="btn btn-gray" href="/admin-logout">관리자 로그아웃</a>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>오늘 현황</h2>
+      <div class="summary-grid">
+        <div class="summary-box">
+          <div class="summary-label">오늘 접수</div>
+          <div class="summary-value">${summaryStats.today}건</div>
+        </div>
+        <div class="summary-box">
+          <div class="summary-label">확인중</div>
+          <div class="summary-value">${summaryStats.checking}건</div>
+        </div>
+        <div class="summary-box">
+          <div class="summary-label">진행중</div>
+          <div class="summary-value">${summaryStats.progress}건</div>
+        </div>
+        <div class="summary-box">
+          <div class="summary-label">적중</div>
+          <div class="summary-value">${summaryStats.win}건</div>
+        </div>
+        <div class="summary-box">
+          <div class="summary-label">미적중</div>
+          <div class="summary-value">${summaryStats.lose}건</div>
+        </div>
       </div>
     </div>
 
